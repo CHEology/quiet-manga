@@ -1,0 +1,11 @@
+<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Quiet Manga 目录样本</title><img id="mangaFile" src="/test-image?n=101"><script id="qm-fixture" type="application/json"></script><script>
+const options=new URLSearchParams(location.search),touch=options.has('touch'),seed=options.has('keep'),mockSystem=options.has('system');
+if(touch)Object.defineProperty(navigator,'maxTouchPoints',{value:5});
+if(!seed)localStorage.removeItem('quiet-manga:prefs');
+const originalFetch=window.fetch.bind(window),urls=Array.from({length:8},(_,i)=>'/test-image?n='+(101+i));
+document.querySelector('#qm-fixture').textContent=JSON.stringify({bid:900,cid:1,prevId:0,nextId:2,urls});
+history.replaceState(null,'','/comic/900/1.html');
+const group=(name,labels,start)=>'<h4>'+name+'</h4><div class="chapter-list">'+labels.map((label,i)=>'<a href="/comic/900/'+(start+i)+'.html" title="'+label+'">'+label+'</a>').join('')+'</div>';
+window.fetch=(url,opts)=>new URL(url,location).pathname==='/comic/900/'?Promise.resolve(new Response(group('单行本',['第01卷'],201)+group('番外篇',['01卷番外','02卷番外','3卷番外','4卷番外','第5卷番外','第5卷小册子'],202)+group('单话',Array.from({length:120},(_,i)=>'第'+String(i+1).padStart(2,'0')+'话'),1))):originalFetch(url,opts);
+if(mockSystem){const orig=window.matchMedia.bind(window),m=new EventTarget();m.matches=false;window.testDark=dark=>{m.matches=dark;m.dispatchEvent(new Event('change'));};window.matchMedia=s=>s==='(prefers-color-scheme: dark)'?m:orig(s);}
+</script><script src="/quiet-manga.user.js"></script>

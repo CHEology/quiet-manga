@@ -7,6 +7,7 @@ document.querySelector('#run').onclick=async()=>{
   const jump=async n=>{q('#page').value=n;q('#page').dispatchEvent(new Event('change',{bubbles:true}));await until(()=>host.dataset.committed==n);};
   const key=k=>q('#stage').dispatchEvent(new KeyboardEvent('keydown',{key:k,bubbles:true,composed:true,cancelable:true}));
   const wheel=(dx,dy,ctrl=false,deltaMode=0)=>{const box=q('#stage').getBoundingClientRect(),e=new WheelEvent('wheel',{deltaX:dx,deltaY:dy,ctrlKey:ctrl,deltaMode,clientX:box.left+box.width/2,clientY:box.top+box.height/2,bubbles:true,composed:true,cancelable:true});q('#stage').dispatchEvent(e);return e;};
+  const doubleClick=()=>{const b=q('#stage').getBoundingClientRect();q('#single img').dispatchEvent(new MouseEvent('dblclick',{bubbles:true,composed:true,clientX:b.left+b.width/2,clientY:b.top+b.height/2}));};
   const position=()=>{const s=q('#stage'),e=s.querySelector(`[data-page="${host.dataset.page}"]`);return {page:host.dataset.page,offset:(s.scrollTop-e.offsetTop)/e.offsetHeight};};
   q('#launch').click();await until(()=>q('#single img')||q('#strip'));q('#fit').click();await until(()=>q('#single img'));
   await test('整页不裁切',()=>{const s=q('#stage'),i=q('#single img');check(i.clientHeight<=s.clientHeight&&i.clientWidth<=s.clientWidth,'超出画布');});
@@ -18,8 +19,14 @@ document.querySelector('#run').onclick=async()=>{
   await test('横页适配',async()=>{await jump(5);const i=q('#single img');check(i.clientWidth>i.clientHeight&&i.clientWidth<=q('#stage').clientWidth,'横页溢出');});
   await test('首尾不越界',async()=>{key('End');key('ArrowRight');await until(()=>host.dataset.committed==='12');check(q('#next').disabled,'尾页仍可前进');key('Home');key('ArrowLeft');await until(()=>host.dataset.committed==='1');check(q('#prev').disabled,'首页仍可后退');});
   await test('单击图片不翻页',async()=>{q('#single img').click();await wait(50);check(host.dataset.page==='1','误翻页');});
-  await test('放大和 Esc 恢复',()=>{q('#zoom').click();check(host.dataset.zoom==='2.5','未放大');key('Escape');check(host.dataset.zoom==='1'&&q('dialog').open,'未恢复或误退出');});
-  await test('整页捏合连续缩放并保持焦点',async()=>{q('#zoom').click();const stage=q('#stage'),img=q('#single img'),b=stage.getBoundingClientRect(),before=img.getBoundingClientRect(),anchor=(b.top+b.height/2-before.top)/before.height;const e=wheel(0,-35,true);await wait(60);const after=img.getBoundingClientRect(),anchor2=(b.top+b.height/2-after.top)/after.height;check(e.defaultPrevented&&Number(host.dataset.zoom)>2.5,'捏合无效');check(Math.abs(anchor-anchor2)<.003,'缩放焦点漂移 '+JSON.stringify({anchor,anchor2,before:before.toJSON(),after:after.toJSON(),scroll:stage.scrollTop}));key('Escape');});
+  await test('双击漫画放大和 Esc 恢复',()=>{doubleClick();check(host.dataset.zoom==='2.5','未放大');key('Escape');check(host.dataset.zoom==='1'&&q('dialog').open,'未恢复或误退出');});
+  await test('整页捏合连续缩放并保持焦点',async()=>{doubleClick();const stage=q('#stage'),img=q('#single img'),b=stage.getBoundingClientRect(),before=img.getBoundingClientRect(),anchor=(b.top+b.height/2-before.top)/before.height;const e=wheel(0,-35,true);await wait(60);const after=img.getBoundingClientRect(),anchor2=(b.top+b.height/2-after.top)/after.height;check(e.defaultPrevented&&Number(host.dataset.zoom)>2.5,'捏合无效');check(Math.abs(anchor-anchor2)<.003,'缩放焦点漂移 '+JSON.stringify({anchor,anchor2,before:before.toJSON(),after:after.toJSON(),scroll:stage.scrollTop}));key('Escape');});
+  await test('放大越过横滚阈值保持画面焦点，Z 可用键盘复原',async()=>{
+    const s=q('#stage'),img=q('#single img');s.style.width='1120px';s.style.height='610px';await wait(100);
+    const y=()=>s.getBoundingClientRect().top+s.getBoundingClientRect().height/2,at=()=>(y()-img.getBoundingClientRect().top)/img.getBoundingClientRect().height;
+    try{key('z');await wait(60);const old=at();check(img.clientWidth<s.clientWidth&&+host.dataset.zoom===2.5,'缩放前置条件');wheel(0,-45,true);await wait(100);check(img.clientWidth>s.clientWidth&&Math.abs(old-at())<.003,'滚动条出现时焦点漂移');key('z');check(host.dataset.zoom==='1','Z 未恢复');}
+    finally{s.style.removeProperty('width');s.style.removeProperty('height');if(host.dataset.zoom!=='1')key('Escape');await wait(80);}
+  });
   await test('整页横滑缩放、上限和恢复',async()=>{wheel(100,0);await wait(50);check(Number(host.dataset.zoom)>1,'横滑未放大');for(let i=0;i<20;i++)wheel(0,-120,true);await wait(50);check(Number(host.dataset.zoom)===5,'缩放上限错误');key('Escape');check(host.dataset.zoom==='1','恢复失败');});
   await test('切换模式取消未执行的手势',async()=>{wheel(0,-100,true);q('#flow').click();const width=q('#width').value;await wait(60);check(q('#width').value===width&&host.dataset.zoom==='1','旧手势污染新模式');q('#fit').click();await until(()=>q('#single img'));});
   await test('连续模式保留页内位置',async()=>{await jump(3);q('#flow').click();await wait(200);q('#stage').scrollTop+=300;await wait(200);const a=position();q('#fit').click();await wait(50);q('#flow').click();await wait(200);const b=position();check(a.page===b.page&&Math.abs(a.offset-b.offset)<.002,'位置漂移 '+JSON.stringify([a,b]));});
