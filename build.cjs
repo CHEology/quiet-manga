@@ -2,7 +2,7 @@ const fs=require('node:fs');
 const metadata=`// ==UserScript==
 // @name         Quiet Manga · 漫画柜沉浸阅读
 // @namespace    https://github.com/CHEology/quiet-manga
-// @version      1.0.6
+// @version      1.1.0
 // @description  整页与连续阅读、局部放大、进度记忆和无跳动翻页
 // @match        https://www.manhuagui.com/comic/*/*.html
 // @match        https://tw.manhuagui.com/comic/*/*.html
