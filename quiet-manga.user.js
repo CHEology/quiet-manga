@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Quiet Manga · 漫画柜沉浸阅读
 // @namespace    https://github.com/CHEology/quiet-manga
-// @version      1.4.0
+// @version      1.5.0
 // @description  整页与连续阅读、局部放大、进度记忆和无跳动翻页
 // @match        https://www.manhuagui.com/comic/*/*.html
 // @match        https://tw.manhuagui.com/comic/*/*.html
@@ -66,6 +66,35 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
   if (typeof module !== 'undefined') module.exports = api; else QMCore = api;
 })(typeof window === 'undefined' ? globalThis : window);
 
+// Spread boundaries are chapter-local. Remember a visited opening so that
+// reversing direction reaches the same pages, even around a foldout.
+class ChapterSpreads {
+  constructor() { this.openings = new Map(); }
+
+  reset() { this.openings.clear(); }
+
+  neighbor(page, total, firstAlone, ratios, step) {
+    const known = this.openings.get(page);
+    if (known) return known.find(number => number !== page);
+    if ((firstAlone && page === 1) || ratios.get(page) <= 1) return;
+    let direction = step;
+    if (!direction) {
+      let start = firstAlone ? 2 : 1;
+      for (const [number, heightToWidth] of ratios) {
+        if (heightToWidth <= 1 && number < page) start = Math.max(start, number + 1);
+      }
+      direction = (page - start) % 2 === 0 ? 1 : -1;
+    }
+    const other = page + direction;
+    if (other < (firstAlone ? 2 : 1) || other > total || this.openings.has(other)) return;
+    return other;
+  }
+
+  remember(pages) {
+    for (const page of pages) this.openings.set(page, pages);
+  }
+}
+
 // Touch Events keep the two contacts available on Safari while one-finger
 // panning stays native. Only events on the reading canvas are observed.
 function bindReadingTouch(stage, io) {
@@ -122,7 +151,7 @@ function bindReadingTouch(stage, io) {
   if (document.getElementById('quiet-manga-host')) return;
   const C = QMCore, $ = (s,r=document) => r.querySelector(s);
   const storage = {get(k,d) {try {return JSON.parse(localStorage.getItem('quiet-manga:'+k)) ?? d;} catch {return d;}},set(k,v) {try{localStorage.setItem('quiet-manga:'+k,JSON.stringify(v));}catch{}}};
-  const host = document.createElement('div'); host.id='quiet-manga-host'; host.dataset.version='1.4.0';const touchDevice=navigator.maxTouchPoints>0;if(touchDevice)host.dataset.touch='true';
+  const host = document.createElement('div'); host.id='quiet-manga-host'; host.dataset.version='1.5.0';const touchDevice=navigator.maxTouchPoints>0;if(touchDevice)host.dataset.touch='true';
   host.setAttribute('data-darkreader-ignore',''); document.documentElement.append(host);
   const root = host.attachShadow({mode:'open'});
   root.innerHTML = `<style>
@@ -159,23 +188,106 @@ button,a,select{border:1px solid var(--qm-stroke,#ffffff24);background:var(--qm-
 @media(prefers-reduced-motion:reduce){*{transition:none!important;scroll-behavior:auto!important}}
 :host([data-palette="light"]){color-scheme:light;--qm-canvas:#eeede9;--qm-ink:#282c31;--qm-card:#fcfbf8;--qm-panel:#fcfbf8;--qm-control:#f4f3ef;--qm-hover:#e7e7e2;--qm-entry:#fcfbf8;--qm-chosen:#e7edf4;--qm-text:#253345;--qm-tool:#374248;--qm-high:#1c2731;--qm-muted:#57636b;--qm-soft:#475763;--qm-heading:#485966;--qm-secondary:#4d5b66;--qm-jump:#374855;--qm-hint:#5c675f;--qm-blank:#e5e5df;--qm-field:#f3f2ef;--qm-blue:#356da5;--qm-entryLine:#547da8;--qm-panelLine:#c4c8c9;--qm-cardLine:#c5c9c9;--qm-scroll:#aaaead;--qm-bar:#f5f4f0f5;--qm-barFade:#f5f4f0dc;--qm-overlay:#faf9f5f5;--qm-stroke:#26364824;--qm-statusStroke:#26364828;--qm-fieldStroke:#26364830;--qm-line:#2e3c4b26;--qm-wash:#1c35550c;--qm-wash2:#1c35550b;--qm-active:#20354a12;--qm-subtle:#ffffff58;--qm-selectedText:#397cb433;--qm-blueMuted:#397cb466;--qm-shadow:#2434481c;--qm-shade:#141c305c}
 :host([data-palette="light"]) dialog:not(#toc)::backdrop{background:#eeede9}:host([data-palette="light"]) #toc::backdrop{background:#141c305c}
+#single .spreadFrame{display:flex;align-items:stretch;flex:none;margin:0;direction:ltr}
+#single.zoomed .spreadFrame{margin:0 auto}
+#single .spreadFrame img{height:100%;width:auto;min-width:0;flex:none;margin:0}
+#pageSlot{position:relative;display:grid;align-items:center}
+#pageRange{position:absolute;inset:0;color:var(--qm-text,#e6edf6);pointer-events:none;text-align:center}
+#pager.hasPair label{grid-template-columns:var(--pair-width) 1ch var(--pair-width)}
+#pager.hasPair #page:not(:focus){opacity:0}
+#page:focus + #pageRange{visibility:hidden}
+#pager.rtl{flex-direction:row-reverse}
+#pager.rtl svg{transform:scaleX(-1)}
+#settings{width:304px;--qm-setting-column:min(150px,62%)}
+#settings [hidden]{display:none!important}
+#layoutPrefs{margin:0 0 18px;padding:0 0 18px;border-bottom:1px solid var(--qm-line,#ffffff12)}
+.layoutRow,#settings #appearanceLabel,#settings #directionLabel{display:grid;grid-template-columns:minmax(0,1fr) var(--qm-setting-column);align-items:center;gap:10px}
+.pairSegments{display:grid;grid-template-columns:1fr 1fr;gap:3px;padding:3px;border-radius:8px;background:var(--qm-field,#171b20)}
+.pairSegments button{display:inline-flex;align-items:center;justify-content:center;gap:6px;min-height:36px;padding:0 7px;border:1px solid transparent;border-radius:5px;background:transparent;color:var(--qm-tool,#cbd1d9)}
+.pairSegments button[aria-pressed=true]{border-color:var(--qm-blue,#80ade0);background:var(--qm-panel,#24292f);color:var(--qm-text,#e6edf6)}
+.pairSegments svg{width:17px;height:17px;fill:none;stroke:currentColor;stroke-width:1.4;stroke-linejoin:round}
+#settings #directionLabel{justify-content:space-between;margin:14px 0 0}
+#settings #direction,#settings #appearance{width:100%;min-width:0;height:40px;padding:4px 8px;border-radius:6px}
+#settings #coverLabel{margin:10px 0 0;min-height:36px}
+#spreadHint{margin:10px 0 0;color:var(--qm-secondary,#bdc7d4);font-size:15px;line-height:1.5}
+:host([data-touch]) .pairSegments button,:host([data-touch]) #settings :is(#coverLabel,#direction,#appearance){min-height:44px}
 </style>
 <button id="launch">沉浸阅读</button>
 <dialog aria-label="Quiet Manga 漫画阅读器"><header id="top">
 <nav id="chapters" aria-label="章节导航"></nav>
-<nav id="pager" aria-label="翻页"><button id="prev" aria-label="上一页" title="上一页"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 6-6 6 6 6"/></svg></button><label><input id="page" inputmode="numeric" type="number" min="1" aria-label="页码"><span id="pageDivider">/</span><span id="total"></span></label><button id="next" aria-label="下一页" title="下一页"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg></button></nav>
+<nav id="pager" aria-label="翻页"><button id="prev" aria-label="上一页" title="上一页"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 6-6 6 6 6"/></svg></button><label><span id="pageSlot"><input id="page" inputmode="numeric" type="number" min="1" aria-label="页码"><span id="pageRange" aria-hidden="true" hidden></span></span><span id="pageDivider">/</span><span id="total"></span></label><button id="next" aria-label="下一页" title="下一页"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg></button></nav>
 <div id="tools"><div id="modes" role="group" aria-label="阅读模式"><button id="fit" aria-pressed="true">整页</button><button id="flow" aria-pressed="false">连续</button></div>
 <div id="actions"><button id="full" class="icon" aria-label="进入全屏" title="进入全屏"><svg class="expand" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5"/></svg><svg class="collapse" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 8h5V3m13 5h-5V3M8 21v-5H3m13 5v-5h5"/></svg></button>
 <button id="options" class="icon" aria-label="设置" title="设置" aria-expanded="false" aria-controls="settings"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7h2m6 0h10M3 17h10m6 0h2"/><circle cx="8" cy="7" r="3"/><circle cx="16" cy="17" r="3"/></svg></button>
 <button id="exit" class="icon" aria-label="退出" title="退出阅读器"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></button></div></div></header>
 <main id="stage" tabindex="0" aria-label="漫画画布"></main><div id="status" role="status" aria-live="polite"></div>
-<aside id="settings" aria-label="阅读设置" hidden><h2>阅读设置</h2><label id="appearanceLabel">外观<select id="appearance" aria-label="外观"><option value="dark">深色</option><option value="light">浅色</option><option value="system">跟随系统</option></select></label><label id="widthLabel"><span>连续宽度</span><output id="widthValue"></output><input id="width" type="range" min="360" max="1400" step="1" aria-label="连续阅读宽度"></label><label><input id="auto" type="checkbox">下次自动进入</label></aside>
+<aside id="settings" aria-label="阅读设置" hidden><h2>阅读设置</h2>
+<section id="layoutPrefs" aria-label="整页排版">
+  <div class="layoutRow"><span id="layoutLabel">排版</span><div class="pairSegments" role="group" aria-labelledby="layoutLabel">
+    <button id="oneUp" aria-pressed="true"><svg viewBox="0 0 20 20" aria-hidden="true"><rect x="5.5" y="3" width="9" height="14" rx="1"/></svg>单页</button>
+    <button id="twoUp" aria-pressed="false"><svg viewBox="0 0 20 20" aria-hidden="true"><rect x="1.5" y="3.5" width="17" height="13" rx="1"/><path d="M10 3.5v13"/></svg>双页</button>
+  </div></div>
+  <div id="pairDetails" hidden>
+    <label id="directionLabel">阅读方向<select id="direction"><option value="rtl">从右向左</option><option value="ltr">从左向右</option></select></label>
+    <label id="coverLabel"><input id="coverAlone" type="checkbox">首页单独显示</label>
+    <p id="spreadHint" hidden>横屏且窗口足够宽时并排显示。</p>
+  </div>
+</section><label id="appearanceLabel">外观<select id="appearance" aria-label="外观"><option value="dark">深色</option><option value="light">浅色</option><option value="system">跟随系统</option></select></label><label id="widthLabel"><span>连续宽度</span><output id="widthValue"></output><input id="width" type="range" min="360" max="1400" step="1" aria-label="连续阅读宽度"></label><label><input id="auto" type="checkbox">下次自动进入</label></aside>
 </dialog><dialog id="toc" aria-labelledby="tocTitle"><header><h2 id="tocTitle">目录</h2><button id="tocClose" aria-label="关闭目录"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></button></header><input id="tocSearch" type="search" placeholder="搜索章节" aria-label="搜索章节"><p id="tocStatus" role="status"></p><div id="tocList"></div></dialog>`;
   const q = s=>$(s,root), dialog=q('dialog'), stage=q('#stage');
   let data, sources=[], active=false, mode='fit', page=1, committed=0, zoom=1, width=900, token=0, anchorOffset=0, suppressScroll=false, hiddenTimer, saveTimer, scrollRAF=0, previousFocus, originScroll, overflowValue, overflowPriority, ro;
   let key=location.pathname,navController,navSerial=0,tocController,tocItems=null;
   const initialPath=key,prefs=storage.get('prefs',{}),cache=new Map(),ratios=new Map(),toc=q('#toc');
   let metrics=[],chromeScroll=0,viewportState=null,dismissedTouch=false,fitCenter=null,initialTouchWidth=touchDevice&&!Number(prefs.width);
+  const chapterSpreads = new ChapterSpreads();
+  const spreadKey = 'layout:' + (bookId() || initialPath);
+  const savedLayout = storage.get(spreadKey, {}) || {};
+  const layout = {
+    double: savedLayout.double === true,
+    direction: savedLayout.direction === 'ltr' ? 'ltr' : 'rtl',
+    firstAlone: savedLayout.firstAlone === true
+  };
+  let visiblePages = [], pendingSpread = false, pendingSteps = [], requestedDouble = false;
+
+  function wideEnough() {
+    return innerWidth > innerHeight && stage.offsetWidth >= 800;
+  }
+
+  function usesSpreads() {
+    return mode === 'fit' && layout.double && wideEnough();
+  }
+
+  function updateLayoutSettings() {
+    q('#layoutPrefs').hidden = mode !== 'fit';
+    q('#widthLabel').hidden = mode !== 'flow';
+    q('#pairDetails').hidden = !layout.double;
+    q('#spreadHint').hidden = wideEnough();
+    q('#oneUp').setAttribute('aria-pressed', !layout.double);
+    q('#twoUp').setAttribute('aria-pressed', layout.double);
+    q('#direction').value = layout.direction;
+    q('#coverAlone').checked = layout.firstAlone;
+  }
+
+  function changeLayout(changes) {
+    if (Object.keys(changes).every(key => layout[key] === changes[key])) return;
+    Object.assign(layout, changes);
+    storage.set(spreadKey, layout);
+    updateLayoutSettings();
+    if ('direction' in changes) {
+      const frame = q('.spreadFrame');
+      if (frame) frame.style.flexDirection = layout.direction === 'rtl' ? 'row-reverse' : 'row';
+      labels();
+    } else {
+      if ('firstAlone' in changes) chapterSpreads.reset();
+      go(page);
+    }
+  }
+
+  q('#oneUp').onclick = () => changeLayout({double: false});
+  q('#twoUp').onclick = () => changeLayout({double: true});
+  q('#direction').onchange = event => changeLayout({direction: event.target.value});
+  q('#coverAlone').onchange = event => changeLayout({firstAlone: event.target.checked});
+
   function claimViewport(){
     if(!touchDevice||viewportState)return;
     const old=[...document.querySelectorAll('meta[name="viewport" i]')].at(-1),el=old||document.createElement('meta');
@@ -254,7 +366,7 @@ button,a,select{border:1px solid var(--qm-stroke,#ffffff24);background:var(--qm-
       const doc=await fetchDocument(url.href,controller.signal),next=readRemoteChapter(doc);
       if(!active||serial!==navSerial)return;
       if(Number(next.data.bid)!==Number(match[1])||Number(next.data.cid)!==Number(match[2])||!next.sources.length)throw Error('章节校验失败');
-      ++token;cancelAnimationFrame(scrollRAF);scrollRAF=0;clearTimeout(saveTimer);for(const rec of cache.values())rec.cancel?.();cache.clear();ratios.clear();
+      ++token;cancelAnimationFrame(scrollRAF);scrollRAF=0;clearTimeout(saveTimer);for(const rec of cache.values())rec.cancel?.();cache.clear();ratios.clear();chapterSpreads.reset();pendingSteps=[];visiblePages=[];
       data=next.data;sources=next.sources;data.ratio=data.ratio||1.44;key=url.pathname;page=1;anchorOffset=0;committed=0;zoom=1;
       if(options.restore){const saved=C.validProgress(storage.get(key,null),sources.length);page=saved.page;anchorOffset=saved.offset;}
       if(options.history!==false)history.pushState({quietManga:true},'',url.pathname);
@@ -308,26 +420,156 @@ button,a,select{border:1px solid var(--qm-stroke,#ffffff24);background:var(--qm-
     });rec.promise.catch(()=>{});cache.set(n,rec);return rec.promise;
   }
   function prune(){for(const [n,r] of cache){if(Math.abs(n-page)>3){r.cancel?.();cache.delete(n);}}}
-  function labels(){q('#page').value=page;q('#prev').disabled=page<=1;q('#next').disabled=page>=sources.length;host.dataset.page=String(page);host.dataset.mode=mode;host.dataset.zoom=String(zoom);host.dataset.cached=String(cache.size);}
+  function labels() {
+    const pages = mode === 'fit' && visiblePages.includes(page) ? visiblePages : [page];
+    const first = pages[0], last = pages[pages.length - 1], pair = first !== last;
+    const pager = q('#pager'), range = q('#pageRange');
+    q('#page').value = page;
+    q('#prev').disabled = first <= 1;
+    q('#next').disabled = last >= sources.length;
+    pager.classList.toggle('hasPair', pair);
+    pager.classList.toggle('rtl', usesSpreads() && layout.direction === 'rtl');
+    range.hidden = !pair;
+    range.textContent = pair ? first + '–' + last : '';
+    if (pair) pager.style.setProperty('--pair-width', (range.textContent.length + 0.5) + 'ch');
+    const description = pair ? '当前显示第 ' + first + ' 至 ' + last + ' 页' : '';
+    q('#page').setAttribute('aria-description', description);
+    host.dataset.page = String(page);
+    host.dataset.mode = mode;
+    host.dataset.zoom = String(zoom);
+    host.dataset.cached = String(cache.size);
+  }
+
+  function fitSurface() {
+    return q('#single .spreadFrame') || q('#single img');
+  }
   function rememberFitCenter(){
-    const img=q('#single img');if(!touchDevice||zoom<=1||!img)return;
+    const img=fitSurface();if(!touchDevice||zoom<=1||!img)return;
     const r=img.getBoundingClientRect(),s=stage.getBoundingClientRect();
     fitCenter={rx:C.clamp((s.left+stage.clientWidth/2-r.left)/r.width,0,1),ry:C.clamp((s.top+stage.clientHeight/2-r.top)/r.height,0,1)};
   }
-  function fitImage(img){
-    // The stage has no border or padding. Its outer dimensions stay stable
-    // when zoom first introduces a scrollbar; clientHeight can shrink mid-gesture.
-    const box=stage.getBoundingClientRect(),size=C.fit(img.naturalWidth,img.naturalHeight,Math.max(1,box.width-24),Math.max(1,box.height-16));img.style.width=size.w*zoom+'px';img.style.height=size.h*zoom+'px';}
-  async function showPage(n, retry=false){
-    if(!sources.length)return;
-    const next=C.clamp(Math.round(n)||1,1,sources.length);if(next!==page)anchorOffset=0;page=next;zoom=1;fitCenter=null;labels();prune();save();const generation=++token,start=performance.now();
-    if(!cache.get(page)?.ready)setStatus('正在加载第 '+page+' 页…');
-    const target=page;
-    try{const img=await load(target,retry);if(!active||generation!==token||mode!=='fit')return;
-      const wrap=document.createElement('div');wrap.id='single';fitImage(img);wrap.append(img);stage.replaceChildren(wrap);stage.scrollTop=stage.scrollLeft=0;committed=target;host.dataset.committed=target;setStatus('');
-      metrics.push({page:target,ms:Math.round((performance.now()-start)*10)/10});metrics=metrics.slice(-30);host.dataset.timings=JSON.stringify(metrics);
-      labels();for(const p of [page+1,page+2,page-1])if(p>0&&p<=sources.length)load(p).catch(()=>{});
-    }catch(e){if(active&&generation===token)setStatus(`${e.message} · 第 ${target} 页`,()=>showPage(target,true));}
+  function fitImage(surface) {
+    const box = stage.getBoundingClientRect();
+    const availableWidth = Math.max(1, box.width - 24);
+    const availableHeight = Math.max(1, box.height - 16);
+    let size;
+    if (surface.classList.contains('spreadFrame')) {
+      const images = Array.from(surface.children);
+      const aspect = images.reduce((sum, img) => sum + img.naturalWidth / img.naturalHeight, 0);
+      const h = Math.min(availableHeight, availableWidth / aspect, ...images.map(img => img.naturalHeight));
+      size = {w: h * aspect, h};
+    } else {
+      size = C.fit(surface.naturalWidth, surface.naturalHeight, availableWidth, availableHeight);
+    }
+    surface.style.width = size.w * zoom + 'px';
+    surface.style.height = size.h * zoom + 'px';
+  }
+
+  function mountOpening(images, pages) {
+    const wrap = document.createElement('div');
+    wrap.id = 'single';
+    let surface = images[0];
+    if (images.length === 2) {
+      surface = document.createElement('div');
+      surface.className = 'spreadFrame';
+      surface.style.flexDirection = layout.direction === 'rtl' ? 'row-reverse' : 'row';
+      for (const image of images) {
+        image.style.removeProperty('width');
+        image.style.removeProperty('height');
+        surface.append(image);
+      }
+    }
+    fitImage(surface);
+    wrap.append(surface);
+    stage.replaceChildren(wrap);
+    stage.scrollTop = stage.scrollLeft = 0;
+    visiblePages = pages;
+  }
+
+  async function showPage(n, retry = false, step = 0) {
+    if (!sources.length) return;
+    const target = C.clamp(Math.round(n) || 1, 1, sources.length);
+    if (target !== page) anchorOffset = 0;
+    page = target;
+    committed = 0;
+    zoom = 1;
+    fitCenter = null;
+    visiblePages = [];
+    requestedDouble = usesSpreads();
+    pendingSpread = requestedDouble;
+    labels();
+    prune();
+    save();
+    const generation = ++token, start = performance.now();
+    const current = () => active && generation === token && mode === 'fit';
+    if (!cache.get(target)?.ready) setStatus('正在加载第 ' + target + ' 页…');
+    try {
+      const primary = await load(target, retry);
+      if (!current()) return;
+      let pages = [target], images = [primary];
+      if (requestedDouble && primary.naturalWidth < primary.naturalHeight) {
+        let other = chapterSpreads.neighbor(target, sources.length, layout.firstAlone, ratios, step);
+        if (other && !cache.get(other)?.ready) {
+          mountOpening(images, pages);
+          setStatus('');
+        }
+        // A detached or failed companion must never hide the readable page.
+        if (other) {
+          let companion = await load(other).catch(() => null);
+          if (!current()) return;
+          if (!step && other < target && companion && companion.naturalWidth >= companion.naturalHeight) {
+            other = chapterSpreads.neighbor(target, sources.length, layout.firstAlone, ratios, 1);
+            companion = other ? await load(other).catch(() => null) : null;
+            if (!current()) return;
+          }
+          if (companion && companion.naturalWidth < companion.naturalHeight) {
+            pages = [target, other].sort((a, b) => a - b);
+            images = pages.map(number => number === target ? primary : companion);
+          }
+        }
+      }
+      if (requestedDouble) chapterSpreads.remember(pages);
+      mountOpening(images, pages);
+      committed = target;
+      host.dataset.committed = target;
+      setStatus('');
+      metrics.push({page: target, ms: Math.round((performance.now() - start) * 10) / 10});
+      metrics = metrics.slice(-30);
+      host.dataset.timings = JSON.stringify(metrics);
+      labels();
+      for (const number of [pages.at(-1) + 1, pages.at(-1) + 2, pages[0] - 1]) {
+        if (number > 0 && number <= sources.length) load(number).catch(() => {});
+      }
+    } catch (error) {
+      if (!current()) return;
+      pendingSteps = [];
+      setStatus(error.message + ' · 第 ' + target + ' 页', () => showPage(target, true, step));
+    } finally {
+      if (current()) {
+        pendingSpread = false;
+        if (pendingSteps.length) turnPage(pendingSteps.shift());
+      }
+    }
+  }
+
+  function turnPage(step) {
+    if (mode === 'fit' && pendingSpread) {
+      pendingSteps.push(step);
+      return;
+    }
+    const group = mode === 'fit' && visiblePages.includes(page) ? visiblePages : [page];
+    let target;
+    while (step) {
+      target = (step > 0 ? group.at(-1) : group[0]) + step;
+      if (target >= 1 && target <= sources.length) break;
+      step = pendingSteps.shift();
+    }
+    if (!step) return;
+    touch.reset();
+    cancelGesture();
+    if (mode === 'fit') showPage(target, false, step);
+    else go(target);
+    wake();
   }
   function position(at=0){
     if(mode!=='flow')return {page,offset:0};
@@ -353,10 +595,10 @@ button,a,select{border:1px solid var(--qm-stroke,#ffffff24);background:var(--qm-
     const end=document.createElement('section');end.id='chapterEnd';end.setAttribute('aria-label','章节末尾');end.append(chapterJump(data.prevId,true),chapterJump(data.nextId,false));strip.append(end);
     stage.replaceChildren(strip);syncWidth();suppressScroll=true;restore(pos);page=pos.page;resizePos=pos;layoutWidth=stage.clientWidth;layoutHeight=stage.clientHeight;fillWindow();requestAnimationFrame(()=>{suppressScroll=false;});
   }
-  function switchMode(next){touch.reset();cancelGesture();if(!sources.length)return;const pos=position();mode=next;savePrefs();q('#fit').setAttribute('aria-pressed',mode==='fit');q('#flow').setAttribute('aria-pressed',mode==='flow');if(mode==='fit'){anchorOffset=pos.offset;showPage(pos.page);}else flow({page:pos.page,offset:anchorOffset||pos.offset});wake();}
-  function go(n){touch.reset();cancelGesture();if(!sources.length)return;if(mode==='fit')showPage(n);else{page=C.clamp(Math.round(n)||1,1,sources.length);restore({page,offset:0});fillWindow();save();}wake();}
+  function switchMode(next){touch.reset();cancelGesture();if(!sources.length)return;const pos=position();mode=next;pendingSteps=[];visiblePages=[];pendingSpread=false;updateLayoutSettings();savePrefs();q('#fit').setAttribute('aria-pressed',mode==='fit');q('#flow').setAttribute('aria-pressed',mode==='flow');if(mode==='fit'){anchorOffset=pos.offset;showPage(pos.page);}else flow({page:pos.page,offset:anchorOffset||pos.offset});wake();}
+  function go(n){pendingSteps=[];touch.reset();cancelGesture();if(!sources.length)return;if(mode==='fit')showPage(n);else{page=C.clamp(Math.round(n)||1,1,sources.length);restore({page,offset:0});fillWindow();save();}wake();}
   function setZoom(next,x=stage.clientWidth/2,y=stage.clientHeight/2,anchor){
-    if(mode!=='fit'||committed!==page)return;const img=q('#single img');if(!img)return;
+    if(mode!=='fit'||committed!==page)return;const img=fitSurface();if(!img)return;
     const rect=img.getBoundingClientRect(),box=stage.getBoundingClientRect();const rx=anchor?.rx??C.clamp((box.left+x-rect.left)/rect.width,0,1),ry=anchor?.ry??C.clamp((box.top+y-rect.top)/rect.height,0,1);
     zoom=C.clamp(next,1,5);q('#single').classList.toggle('zoomed',zoom>1);fitImage(img);if(zoom>1){stage.scrollLeft=img.offsetLeft+rx*img.clientWidth-x;stage.scrollTop=img.offsetTop+ry*img.clientHeight-y;}else stage.scrollTop=stage.scrollLeft=0;
     rememberFitCenter();chromeScroll=stage.scrollTop;labels();wake();
@@ -402,7 +644,7 @@ button,a,select{border:1px solid var(--qm-stroke,#ffffff24);background:var(--qm-
         const max=Math.min(1400,stage.clientWidth-24);
         return {mode,min:Math.min(widthMin(),max),max,value:strip.getBoundingClientRect().width,anchor:position(p.y-box.top)};
       }
-      const img=q('#single img');if(!img||committed!==page)return null;
+      const img=fitSurface();if(!img||committed!==page)return null;
       const b=img.getBoundingClientRect();return {mode,min:1,max:5,value:zoom,anchor:{rx:C.clamp((p.x-b.left)/b.width,0,1),ry:C.clamp((p.y-b.top)/b.height,0,1)}};
     },
     apply(g,p){if(!active||mode!==g.mode)return;const b=stage.getBoundingClientRect();
@@ -423,7 +665,7 @@ button,a,select{border:1px solid var(--qm-stroke,#ffffff24);background:var(--qm-
     if(el.matches?.('input,select,textarea')){if(e.key==='Enter' && el===q('#page')){e.preventDefault();go(Number(el.value));stage.focus();}else if(e.key==='Escape'){e.preventDefault();hideSettings(true);}return;}
     if(el.matches?.('button,a') && [' ','Enter'].includes(e.key))return;
     if(e.altKey||e.metaKey||e.ctrlKey)return;
-    const actions={...(mode==='fit'?{z:()=>toggleZoom()}:{}),ArrowRight:()=>go(page+1),ArrowLeft:()=>go(page-1),Home:()=>go(1),End:()=>go(sources.length),Escape:()=>{if(!q('#settings').hidden){hideSettings(true);}else if(zoom>1)toggleZoom();else close();},' ':()=>{const dir=e.shiftKey?-1:1; if(mode==='fit' && (zoom===1 || (dir>0?stage.scrollTop+stage.clientHeight>=stage.scrollHeight-2:stage.scrollTop<=0)))go(page+dir);else stage.scrollBy({top:dir*stage.clientHeight*.85,behavior:'instant'});}};
+    const actions={...(mode==='fit'?{z:()=>toggleZoom()}:{}),ArrowRight:()=>turnPage(usesSpreads()&&layout.direction==='rtl'?-1:1),ArrowLeft:()=>turnPage(usesSpreads()&&layout.direction==='rtl'?1:-1),Home:()=>go(1),End:()=>go(sources.length),Escape:()=>{if(!q('#settings').hidden){hideSettings(true);}else if(zoom>1)toggleZoom();else close();},' ':()=>{const dir=e.shiftKey?-1:1; if(mode==='fit' && (zoom===1 || (dir>0?stage.scrollTop+stage.clientHeight>=stage.scrollHeight-2:stage.scrollTop<=0)))turnPage(dir);else stage.scrollBy({top:dir*stage.clientHeight*.85,behavior:'instant'});}};
     if(actions[e.key]){e.preventDefault();actions[e.key]();}
   }
   function open(){if(active)return;active=true;claimViewport();previousFocus=document.activeElement;originScroll={x:scrollX,y:scrollY};overflowValue=document.documentElement.style.getPropertyValue('overflow');overflowPriority=document.documentElement.style.getPropertyPriority('overflow');document.documentElement.style.setProperty('overflow','hidden','important');
@@ -431,8 +673,8 @@ button,a,select{border:1px solid var(--qm-stroke,#ffffff24);background:var(--qm-
     prepare().then(()=>{if(!active)return;if(initialTouchWidth){width=Math.round(widthMax()*.92);initialTouchWidth=false;}syncWidth();const saved=C.validProgress(storage.get(key,null),sources.length);const explicit=location.hash.match(/(?:^#|&)p=(\d+)/);page=explicit?C.clamp(+explicit[1],1,sources.length):saved.page;anchorOffset=explicit?0:saved.offset;switchMode(mode);}).catch(e=>setStatus(e.message,()=>{close();open();}));wake();
   }
   function stopKey(e){if(active)e.stopImmediatePropagation();}
-  function close(){touch.reset();navController?.abort();navSerial++;hideDirectory();cancelGesture();hideSettings();save();if(document.fullscreenElement)document.exitFullscreen().catch(()=>{});active=false;++token;clearTimeout(hiddenTimer);clearTimeout(saveTimer);cancelAnimationFrame(scrollRAF);scrollRAF=0;drag=null;for(const rec of cache.values())rec.cancel?.();cache.clear();stage.replaceChildren();dialog.close();releaseViewport();q('#launch').hidden=false;document.documentElement.style.removeProperty('overflow');if(overflowValue)document.documentElement.style.setProperty('overflow',overflowValue,overflowPriority);window.removeEventListener('keydown',keys,true);window.removeEventListener('keyup',stopKey,true);window.scrollTo(originScroll.x,originScroll.y);previousFocus?.focus({preventScroll:true});host.dataset.active='false';if(key!==initialPath){try{sessionStorage.setItem('quiet-manga:exit',key);}catch{}location.replace(key);}}
-  q('#launch').onclick=()=>{host.dataset.active='true';open();};q('#exit').onclick=close;q('#fit').onclick=()=>switchMode('fit');q('#flow').onclick=()=>switchMode('flow');q('#prev').onclick=()=>go(page-1);q('#next').onclick=()=>go(page+1);
+  function close(){pendingSteps=[];pendingSpread=false;visiblePages=[];touch.reset();navController?.abort();navSerial++;hideDirectory();cancelGesture();hideSettings();save();if(document.fullscreenElement)document.exitFullscreen().catch(()=>{});active=false;++token;clearTimeout(hiddenTimer);clearTimeout(saveTimer);cancelAnimationFrame(scrollRAF);scrollRAF=0;drag=null;for(const rec of cache.values())rec.cancel?.();cache.clear();stage.replaceChildren();dialog.close();releaseViewport();q('#launch').hidden=false;document.documentElement.style.removeProperty('overflow');if(overflowValue)document.documentElement.style.setProperty('overflow',overflowValue,overflowPriority);window.removeEventListener('keydown',keys,true);window.removeEventListener('keyup',stopKey,true);window.scrollTo(originScroll.x,originScroll.y);previousFocus?.focus({preventScroll:true});host.dataset.active='false';if(key!==initialPath){try{sessionStorage.setItem('quiet-manga:exit',key);}catch{}location.replace(key);}}
+  q('#launch').onclick=()=>{host.dataset.active='true';open();};q('#exit').onclick=close;q('#fit').onclick=()=>switchMode('fit');q('#flow').onclick=()=>switchMode('flow');q('#prev').onclick=()=>turnPage(-1);q('#next').onclick=()=>turnPage(1);
   q('#page').addEventListener('change',e=>{go(Number(e.target.value));stage.focus();});q('#page').addEventListener('keydown',e=>{if(e.key==='Enter'){go(Number(e.target.value));stage.focus();}});
   function hideSettings(focus=false){q('#settings').hidden=true;q('#options').setAttribute('aria-expanded','false');if(focus)q('#options').focus();wake();}
   function dismissSettings(e){if(e.type==='pointerdown')dismissedTouch=e.pointerType==='touch'&&!q('#settings').hidden;if(!q('#settings').hidden&&!e.composedPath().includes(q('#settings'))&&!e.composedPath().includes(q('#options')))hideSettings();}
@@ -457,7 +699,10 @@ button,a,select{border:1px solid var(--qm-stroke,#ffffff24);background:var(--qm-
   ro=new ResizeObserver(()=>{if(!active||!data)return;
     if(layoutWidth&&(Math.abs(stage.clientWidth-layoutWidth)>24||Math.abs(stage.clientHeight-layoutHeight)>24))touch.reset();
     syncWidth();
-    if(mode==='fit'){const img=q('#single img');if(img){fitImage(img);if(touchDevice&&zoom>1&&fitCenter){stage.scrollLeft=img.offsetLeft+fitCenter.rx*img.clientWidth-stage.clientWidth/2;stage.scrollTop=img.offsetTop+fitCenter.ry*img.clientHeight-stage.clientHeight/2;rememberFitCenter();}}}else if(resizePos){restore(resizePos);}layoutWidth=stage.clientWidth;layoutHeight=stage.clientHeight;resizePos=position();});ro.observe(stage);
+    updateLayoutSettings();
+    if(mode==='fit' && requestedDouble!==usesSpreads()){
+      pendingSteps=[];showPage(page);
+    }else if(mode==='fit'){const img=fitSurface();if(img){fitImage(img);if(touchDevice&&zoom>1&&fitCenter){stage.scrollLeft=img.offsetLeft+fitCenter.rx*img.clientWidth-stage.clientWidth/2;stage.scrollTop=img.offsetTop+fitCenter.ry*img.clientHeight-stage.clientHeight/2;rememberFitCenter();}}}else if(resizePos){restore(resizePos);}layoutWidth=stage.clientWidth;layoutHeight=stage.clientHeight;resizePos=position();});ro.observe(stage);
   stage.addEventListener('scroll',()=>{if(stage.clientWidth!==layoutWidth||stage.clientHeight!==layoutHeight)return;if(mode==='flow')resizePos=position();else rememberFitCenter();},{passive:true});
   let skipAuto=false;try{skipAuto=sessionStorage.getItem('quiet-manga:exit')===key;sessionStorage.removeItem('quiet-manga:exit');}catch{}
   if(prefs.auto&&!skipAuto){let attempts=0;const timer=setInterval(()=>{if($('#mangaFile')?.naturalWidth){clearInterval(timer);q('#launch').click();}else if(++attempts>=60)clearInterval(timer);},250);}

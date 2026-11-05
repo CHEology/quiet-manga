@@ -1,0 +1,22 @@
+<!doctype html><html lang="zh"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>双页阅读样本</title><img id="mangaFile" alt="测试画面"><script id="qm-fixture" type="application/json"></script><script>
+const opts=new URLSearchParams(location.search),book=opts.get('book')||'900';
+if(opts.has('touch')) Object.defineProperty(navigator,'maxTouchPoints',{value:5});
+if(!opts.has('keep')){
+  localStorage.removeItem('quiet-manga:prefs');
+  localStorage.removeItem('quiet-manga:layout:'+book);
+  localStorage.removeItem('quiet-manga:/comic/'+book+'/1.html');
+}
+history.replaceState(null,'','/comic/'+book+'/1.html');
+const forest=Array.from({length:74},(_,i)=>{
+  const x=(i*47)%1200,y=510+38*Math.sin(x/140),h=18+(i*17)%49;
+  return '<path d="M'+(x-h*.22)+' '+(y+14)+'l'+(h*.22)+' -'+h+' '+(h*.22)+' '+h+'z"/>';
+}).join('');
+// A two-leaf registration target. The moon, waterlines and ridgeline span the seam.
+const landscape='<rect width="1200" height="820" fill="#ede8d9"/><circle cx="592" cy="319" r="114" fill="#d4bda2"/><path d="M0 342Q135 255 270 337T520 307T790 289T1030 270T1200 306V615H0Z" fill="#b7c3ba"/><path d="M0 405Q95 320 186 378T430 400T638 345T844 345T1085 361T1200 294V640H0Z" fill="#849d96"/><path d="M0 457Q140 522 275 444T494 418T700 439T952 401T1200 427V650H0Z" fill="#516f6a"/><path d="M0 480Q150 525 318 486T622 485T915 468T1200 446V820H0Z" fill="#c6cfbe"/><g fill="none" stroke="#718b83" stroke-width="2">'+Array.from({length:20},(_,i)=>'<path d="M'+(i%3*36)+' '+(495+i*12)+'q155 -7 320 1t340 -2t490 2"/>').join('')+'</g><g fill="#314c4a">'+forest+'</g><path d="M0 518Q145 483 292 526T555 527T782 512T1000 535T1200 500V570Q976 551 820 563T500 553T210 552T0 547Z" fill="#344f4b"/>';
+function art(n,w=600,h=820){const origin=n%2?600:0;return 'data:image/svg+xml;charset=UTF-8,'+encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="'+w+'" height="'+h+'" viewBox="'+origin+' 0 600 820" preserveAspectRatio="none">'+landscape+'</svg>');}
+const urls=[art(1),art(2),art(3,490,800),art(4),art(5,1100,670),art(6),art(7),art(8,600,600),art(9)];
+if(opts.has('slow'))urls[1]='/test-image?n=8&run='+Date.now();
+if(opts.has('fail'))urls[1]='/test-image?n=7&run='+Date.now();
+document.querySelector('#mangaFile').src=urls[0];
+document.querySelector('#qm-fixture').textContent=JSON.stringify({bid:+book,cid:1,prevId:0,nextId:2,urls});
+</script><script src="/quiet-manga.user.js"></script></html>
