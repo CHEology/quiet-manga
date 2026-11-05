@@ -27,4 +27,4 @@
 - [x] 单文件 userscript，无远程代码依赖、无上传和跟踪。
 - [x] 安装说明、测试记录、限制说明、源码及私有 GitHub 仓库。
 
-本轮 v1.1 已完成本机 Chrome 本地回归；漫画站页面的脚本更新需要用户在 Tampermonkey 点击 Update 后确认。
+本轮 v1.1 已完成本机 Chrome 回归和实站验收；用户已更新 Tampermonkey，实际漫画页 version=1.1.0、fullscreen=on、width=580，底栏已删除。
