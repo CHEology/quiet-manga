@@ -1,4 +1,4 @@
-# v1.2 验收记录
+# v1.2.1 验收记录
 
 本轮把全部固定控件归入极简顶栏，新增章末留白和较大的上下章入口，并将目录与章节切换保留在阅读器内。最终版在用户原有 Chrome 环境运行：核心 10/10，阅读交互 34/34，目录与切章 8/8，响应式 7/7，共 59 项。
 
@@ -11,7 +11,9 @@
 - 首轮视觉改动回归曾记录一次缩放焦点误差；加入完整几何诊断后，最终代码两轮完整阅读回归均通过。未删去该断言。
 - 全屏原生操作最初因测试标签不在前台而被 Chrome 拒绝；切到前台后请求成功，已验证切章不会退出全屏。
 
-当前 v1.2 安装及实站最终验收待用户在 Tampermonkey 更新。结果明细：`tests/latest-browser-results.txt`、`tests/latest-navigation-results.txt`、`tests/latest-responsive-results.txt`。本轮验收清单在 `tests/iteration-1.2.md`。
+v1.2.1 额外通过真实 Chrome 手动检查：页码聚焦无 outline、透明背景、1px 内侧下划线；输入第 2 页并 Enter 后提交到第 2 页且焦点回到画布。
+
+当前 v1.2.1 安装及实站最终验收待用户在 Tampermonkey 更新。结果明细：`tests/latest-browser-results.txt`、`tests/latest-navigation-results.txt`、`tests/latest-responsive-results.txt`。本轮验收清单在 `tests/iteration-1.2.md`。
 
 ---
 
