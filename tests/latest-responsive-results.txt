@@ -1,6 +1,9 @@
 RUNNING
 PASS 600 px 宽度与位置
 PASS 360 px 宽度与位置
+PASS 320 px 宽度与位置
 PASS 1000 px 宽度与位置
+PASS 1440 px 宽度与位置
 PASS 360×640 整页和设置
-4 PASS / 0 FAIL
+PASS 360×640 目录浮层
+7 PASS / 0 FAIL

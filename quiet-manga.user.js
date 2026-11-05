@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Quiet Manga · 漫画柜沉浸阅读
 // @namespace    https://github.com/CHEology/quiet-manga
-// @version      1.1.0
+// @version      1.2.0
 // @description  整页与连续阅读、局部放大、进度记忆和无跳动翻页
 // @match        https://www.manhuagui.com/comic/*/*.html
 // @match        https://tw.manhuagui.com/comic/*/*.html
@@ -48,9 +48,19 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
     base.search = '';
     return data.files.map(f => { const u = new URL(f, base); u.search = query; return u.href; });
   }
+  function chapterUrls(data,current) {
+    const base=new URL(current),path=data.path,sl=data.sl;
+    if(!/^https?:$/.test(base.protocol)||typeof path!=='string'||!path.startsWith('/')||path.startsWith('//')||!path.endsWith('/')||/[?#\\]/.test(path))throw Error('章节图片路径不可用');
+    let decoded;try{decoded=decodeURIComponent(path);}catch{throw Error('章节图片路径不可用');}
+    if(decoded.split('/').includes('..')||decoded.includes('\\')||decoded.startsWith('//'))throw Error('章节图片路径不可用');
+    if(!sl||!/^\d{1,16}$/.test(String(sl.e))||!/^[A-Za-z0-9_+\/=-]{8,256}$/.test(String(sl.m)))throw Error('章节图片签名不可用');
+    const folder=new URL(path,base.origin);if(folder.origin!==base.origin)throw Error('章节图片来源不可用');
+    folder.search=new URLSearchParams({e:String(sl.e),m:sl.m}).toString();
+    return urls(data,folder.href);
+  }
   function fit(w,h,vw,vh) { const scale = Math.min(vw / w, vh / h, 1); return {w:w*scale,h:h*scale}; }
   function validProgress(p,n) { return p && Number.isFinite(p.page) ? {page:clamp(Math.round(p.page),1,n),offset:clamp(Number(p.offset)||0,0,1)} : {page:1,offset:0}; }
-  const api = {clamp,unquote,parseChapter,urls,fit,validProgress};
+  const api = {clamp,unquote,parseChapter,urls,chapterUrls,fit,validProgress};
   if (typeof module !== 'undefined') module.exports = api; else QMCore = api;
 })(typeof window === 'undefined' ? globalThis : window);
 
@@ -59,7 +69,7 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
   if (document.getElementById('quiet-manga-host')) return;
   const C = QMCore, $ = (s,r=document) => r.querySelector(s);
   const storage = {get(k,d) {try {return JSON.parse(localStorage.getItem('quiet-manga:'+k)) ?? d;} catch {return d;}},set(k,v) {try{localStorage.setItem('quiet-manga:'+k,JSON.stringify(v));}catch{}}};
-  const host = document.createElement('div'); host.id='quiet-manga-host'; host.dataset.version='1.1.0';
+  const host = document.createElement('div'); host.id='quiet-manga-host'; host.dataset.version='1.2.0';
   host.setAttribute('data-darkreader-ignore',''); document.documentElement.append(host);
   const root = host.attachShadow({mode:'open'});
   root.innerHTML = `<style>
@@ -68,35 +78,45 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
 #launch{position:fixed;right:24px;bottom:24px;z-index:2147483646;background:#252b33;color:#e6edf6;border:1px solid #709ed3;border-radius:999px;padding:13px 22px;font-size:16px;box-shadow:0 5px 30px #0006}
 dialog{position:fixed;inset:0;margin:0;padding:0;border:0;width:100vw;max-width:none;height:100dvh;max-height:none;background:#17191b;color:#f1f1ed;overflow:hidden;font-size:15px}dialog::backdrop{background:#17191b}
 button,a,select{border:1px solid #ffffff24;background:#282c2f;color:inherit;border-radius:9px;padding:9px 13px;text-decoration:none;white-space:nowrap}button:hover,a:hover{background:#3b4144}button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid #80ade0;outline-offset:3px}button[aria-pressed=true]{background:#282e36;color:#e6edf6;border-color:#80ade0}
-#top{position:absolute;inset:0 0 auto;z-index:5;display:flex;gap:18px;align-items:center;height:62px;padding:12px 20px;background:#17191bf5;border-bottom:1px solid #ffffff0a;transition:opacity .2s}#modes,#actions{display:flex;align-items:center;gap:6px}#actions{gap:8px}#top button{height:36px;padding:0 12px;border-radius:7px;background:#23272c}#top button:hover{background:#323941}#top button[aria-pressed=true],#options[aria-expanded=true]{border-color:#80ade0;background:#282e36}#top #full{width:36px;padding:0;display:grid;place-items:center}#full svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}#full .collapse,#full.is-fullscreen .expand{display:none}#full.is-fullscreen .collapse{display:block}
-#brand{font-weight:650;font-size:17px;color:#cbd1d9}#title{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0;color:#c5c8c6}#rail{position:absolute;right:12px;top:50%;transform:translateY(-50%);display:flex;flex-direction:column;align-items:center;gap:7px;z-index:5;background:#222629e8;border:1px solid #ffffff20;padding:7px;border-radius:12px;transition:opacity .2s}#rail button{width:100%;padding:8px 10px}
-#rail input{width:40px;border:0;border-radius:6px;background:#151819;color:#fff;text-align:center;padding:7px 2px}#rail label{white-space:nowrap;display:flex;flex-direction:column;align-items:center;gap:3px;padding:3px 0}#rail input::-webkit-inner-spin-button{display:none}#total{color:#a3aaa6}#stage{position:absolute;inset:62px 0 0;overflow:auto;overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:#59615e transparent;outline:none;overflow-anchor:none;touch-action:pan-x pan-y}
+#top{position:absolute;inset:0 0 auto;z-index:5;display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);gap:20px;align-items:center;min-height:56px;padding:10px 20px;background:#17191bf5;transition:opacity .2s}#chapters,#pager,#tools,#modes,#actions{display:flex;align-items:center}#chapters{gap:4px;min-width:0}#pager{gap:4px;justify-content:center}#tools{justify-self:end;gap:16px}#modes,#actions{gap:4px}
+#top button,#top a{display:inline-flex;align-items:center;justify-content:center;height:36px;padding:0 10px;border:1px solid transparent;border-radius:5px;background:transparent;color:#cbd1d9;font-size:15px}#top button:hover,#top a:hover{background:#ffffff09;color:#f1f4f8}#top button[aria-pressed=true]{border-color:#80ade0;color:#e6edf6}#options[aria-expanded=true]{background:#ffffff0d;color:#e6edf6}#top button:disabled{background:transparent;opacity:.3}
+#top .icon{width:34px;padding:0}#top svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round}#full .collapse,#full.is-fullscreen .expand{display:none}#full.is-fullscreen .collapse{display:block}#top #prev,#top #next{width:32px;padding:0;display:grid;place-items:center;flex:none}#pager svg{width:16px;height:16px;stroke-width:1.6}#pager label{display:grid;grid-template-columns:3ch 1ch 3ch;align-items:center;gap:0;height:36px;white-space:nowrap;font-variant-numeric:tabular-nums;font-size:15px;line-height:36px;text-align:center}#page{appearance:textfield;width:100%;height:36px;line-height:36px;margin:0;border:0;border-radius:3px;background:transparent;color:#e6edf6;text-align:center;padding:0;font:inherit;font-variant-numeric:tabular-nums}#page:hover,#page:focus{background:#ffffff09}#page::-webkit-inner-spin-button,#page::-webkit-outer-spin-button{appearance:none;margin:0}#pageDivider,#total{color:#8f99a5;display:block;height:36px;line-height:36px;text-align:center}#zoom:disabled{display:none}#stage{position:absolute;inset:56px 0 0;overflow:auto;overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:#59615e transparent;outline:none;overflow-anchor:none;touch-action:pan-x pan-y}
 #single{position:relative;min-width:100%;min-height:100%;display:flex;justify-content:center;align-items:center;padding:8px}#single.zoomed{display:block;padding:0;cursor:grab}#single.zoomed:active{cursor:grabbing}#single img{display:block;user-select:none;-webkit-user-drag:none;max-width:none;flex-shrink:0}#single.zoomed img{margin:auto}
 #strip{margin:auto;max-width:calc(100% - 24px)}.sheet{position:relative;width:100%;margin:0 0 16px;background:#202427;overflow:hidden;contain:layout paint}.sheet img{display:block;width:100%;height:100%;object-fit:contain}.sheet .placeholder{position:absolute;inset:0;display:grid;place-content:center;color:#909c95;gap:12px;text-align:center;font-size:16px}
 #status{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);z-index:4;background:#22282bf2;border:1px solid #ffffff22;border-radius:14px;padding:20px;display:flex;flex-direction:column;gap:14px;text-align:center;max-width:90%}#status:empty{display:none}
-#settings{position:absolute;right:20px;top:70px;width:310px;max-width:calc(100% - 24px);max-height:calc(100% - 156px);overflow:auto;z-index:7;background:#24292f;border:1px solid #4b5663;border-radius:12px;padding:20px;box-shadow:0 12px 40px #0006}#settings h2{font-size:17px;font-weight:600;margin:0 0 22px}#settings label{display:flex;gap:10px;align-items:center;margin:18px 0}#settings #widthLabel{display:grid;grid-template-columns:1fr auto;gap:16px;margin:0 0 24px}#widthValue{color:#bac5d3;font-variant-numeric:tabular-nums}#settings input[type=range]{grid-column:1/-1;width:100%;margin:0;accent-color:#80ade0}#settings input[type=checkbox]{accent-color:#80ade0;width:16px;height:16px;margin:0}#settings nav{display:flex;flex-wrap:wrap;gap:8px;margin-top:22px;padding-top:18px;border-top:1px solid #ffffff15}#settings nav:empty{display:none}#settings nav a{flex:1;text-align:center;padding:8px}#settings[hidden]{display:none}
-.quiet #top,.quiet #rail{opacity:0;pointer-events:none}.quiet #top:focus-within,.quiet #rail:focus-within{opacity:1;pointer-events:auto}
-@media(max-width:850px){#title,#brand{display:none}#top{justify-content:flex-end}}
-@media(max-width:500px){#top{gap:10px;padding:12px;justify-content:space-between}#top button{padding:0 10px}#actions,#modes{gap:5px}#rail{right:8px}#settings{right:12px}}
-.fullscreen #stage{inset:0}.fullscreen #top{background:linear-gradient(#17191bf5,#17191bcc);border-bottom:0}.fullscreen #settings{max-height:calc(100% - 88px)}
+#settings{position:absolute;right:20px;top:62px;width:280px;max-width:calc(100% - 24px);max-height:calc(100% - 156px);overflow:auto;z-index:7;background:#24292f;border:1px solid #4b5663;border-radius:12px;padding:20px;box-shadow:0 12px 40px #0006}#settings h2{font-size:17px;font-weight:600;margin:0 0 22px}#settings label{display:flex;gap:10px;align-items:center;margin:18px 0}#settings #widthLabel{display:grid;grid-template-columns:1fr auto;gap:16px;margin:0 0 24px}#widthValue{color:#bac5d3;font-variant-numeric:tabular-nums}#settings input[type=range]{grid-column:1/-1;width:100%;margin:0;accent-color:#80ade0}#settings input[type=checkbox]{accent-color:#80ade0;width:16px;height:16px;margin:0}#settings[hidden]{display:none}
+#chapterEnd{min-height:60dvh;display:flex;align-items:center;justify-content:center;gap:clamp(24px,6%,48px);padding:40px 16px}#chapterEnd .chapterJump{flex:1;min-width:0;max-width:200px;height:68px;display:flex;align-items:center;justify-content:center;gap:14px;padding:16px 12px;border:1px solid #ffffff12;border-radius:8px;background:#ffffff03;color:#cbd5e1;font-size:18px;line-height:1.4}#chapterEnd .chapterJump:hover{color:#f1f4f8;background:#ffffff08;border-color:#80ade066}#chapterEnd .chapterJump:disabled{background:transparent;border-color:transparent}#chapterEnd svg{width:22px;height:22px;flex:none;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
+#toc{inset:0;margin:auto;width:min(700px,calc(100vw - 32px));height:auto;max-height:calc(100dvh - 40px);padding:24px;border:1px solid #454f5b;border-radius:12px;background:#20252b;box-shadow:0 20px 80px #0009}#toc[open]{display:flex;flex-direction:column;gap:16px}#toc::backdrop{background:#0009}#toc header{display:flex;align-items:center;justify-content:space-between;gap:16px}#toc h2{font-size:20px;font-weight:550;margin:0}#tocClose{border:0;background:transparent;width:32px;height:32px;padding:0;display:grid;place-items:center;border-radius:5px}#tocClose svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round}#tocSearch{font:inherit;width:100%;background:#171b20;border:1px solid #ffffff20;border-radius:6px;color:inherit;padding:10px 12px}#tocList{min-height:0;max-height:min(440px,calc(100dvh - 220px));overflow:auto;display:grid;grid-template-columns:repeat(auto-fill,minmax(125px,1fr));align-content:start;gap:8px;padding:0}#tocList h3{grid-column:1/-1;font-size:16px;color:#aeb9c7;margin:8px 0;font-weight:500}#tocList button{min-height:40px;padding:8px;background:transparent;border-color:#ffffff12;font-size:15px;white-space:normal}#tocList button:hover{background:#ffffff08}#tocList button[aria-current=page]{border-color:#80ade0;color:#e6edf6}#tocStatus{margin:0;color:#bdc7d4;font-size:16px}#tocStatus:empty{display:none}
+.quiet #top{opacity:0;pointer-events:none}.quiet #top:focus-within{opacity:1;pointer-events:auto}
+@media(max-width:1100px){#top{display:flex;justify-content:space-between;gap:12px;padding:10px 12px}#tools{gap:8px}#top button,#top a{padding:0 8px}#top .icon{padding:0}}
+@media(max-width:760px){#top{display:grid;grid-template-columns:1fr auto;gap:4px 8px;padding:7px 12px}#chapters{grid-column:1;grid-row:1}#pager{grid-column:2;grid-row:1;justify-content:flex-end}#tools{grid-column:1/-1;grid-row:2;justify-self:end;gap:12px}#stage{top:90px}#settings{top:96px;right:12px}}
+@media(max-width:380px){#top{padding:7px 8px;column-gap:4px}#top button,#top a{padding:0 6px;font-size:14px}#chapters{gap:0}#pager{gap:0;font-size:14px}#top #prev,#top #next{width:26px}#pager label{font-size:14px}#tools{gap:8px}#top .icon{width:32px;padding:0}}
+.fullscreen #stage{inset:0}.fullscreen #top{background:linear-gradient(#17191bf5,#17191bcc);border-bottom:0}.fullscreen #settings{max-height:calc(100% - 110px)}
 @media(prefers-reduced-motion:reduce){*{transition:none!important;scroll-behavior:auto!important}}
 </style>
 <button id="launch">沉浸阅读</button>
-<dialog aria-label="Quiet Manga 漫画阅读器"><header id="top"><span id="brand">Quiet Manga</span><span id="title"></span><div id="modes" role="group" aria-label="阅读模式"><button id="fit" aria-pressed="true">整页</button><button id="flow" aria-pressed="false">连续</button></div><div id="actions"><button id="full" aria-label="进入全屏" title="进入全屏"><svg class="expand" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5"/></svg><svg class="collapse" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 8h5V3m13 5h-5V3M8 21v-5H3m13 5v-5h5"/></svg></button><button id="options" aria-expanded="false" aria-controls="settings">设置</button><button id="exit">退出</button></div></header>
+<dialog aria-label="Quiet Manga 漫画阅读器"><header id="top">
+<nav id="chapters" aria-label="章节导航"></nav>
+<nav id="pager" aria-label="翻页"><button id="prev" aria-label="上一页" title="上一页"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 6-6 6 6 6"/></svg></button><label><input id="page" type="number" min="1" aria-label="页码"><span id="pageDivider">/</span><span id="total"></span></label><button id="next" aria-label="下一页" title="下一页"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg></button></nav>
+<div id="tools"><div id="modes" role="group" aria-label="阅读模式"><button id="fit" aria-pressed="true">整页</button><button id="flow" aria-pressed="false">连续</button></div>
+<div id="actions"><button id="zoom" aria-label="放大或恢复">放大</button><button id="full" class="icon" aria-label="进入全屏" title="进入全屏"><svg class="expand" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5"/></svg><svg class="collapse" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 8h5V3m13 5h-5V3M8 21v-5H3m13 5v-5h5"/></svg></button>
+<button id="options" class="icon" aria-label="设置" title="设置" aria-expanded="false" aria-controls="settings"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7h2m6 0h10M3 17h10m6 0h2"/><circle cx="8" cy="7" r="3"/><circle cx="16" cy="17" r="3"/></svg></button>
+<button id="exit" class="icon" aria-label="退出" title="退出阅读器"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></button></div></div></header>
 <main id="stage" tabindex="0" aria-label="漫画画布"></main><div id="status" role="status" aria-live="polite"></div>
-<aside id="settings" aria-label="阅读设置" hidden><h2>阅读设置</h2><label id="widthLabel"><span>连续宽度</span><output id="widthValue"></output><input id="width" type="range" min="360" max="1400" step="1" aria-label="连续阅读宽度"></label><label><input id="auto" type="checkbox">下次自动进入</label><nav id="chapters"></nav></aside>
-<nav id="rail" aria-label="阅读工具"><button id="prev" aria-label="上一页">←</button><label><input id="page" type="number" min="1" aria-label="页码"> <span id="total"></span></label><button id="next" aria-label="下一页">→</button><button id="zoom" aria-label="放大或恢复">放大</button></nav></dialog>`;
+<aside id="settings" aria-label="阅读设置" hidden><h2>阅读设置</h2><label id="widthLabel"><span>连续宽度</span><output id="widthValue"></output><input id="width" type="range" min="360" max="1400" step="1" aria-label="连续阅读宽度"></label><label><input id="auto" type="checkbox">下次自动进入</label></aside>
+</dialog><dialog id="toc" aria-labelledby="tocTitle"><header><h2 id="tocTitle">目录</h2><button id="tocClose" aria-label="关闭目录"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></button></header><input id="tocSearch" type="search" placeholder="搜索章节" aria-label="搜索章节"><p id="tocStatus" role="status"></p><div id="tocList"></div></dialog>`;
   const q = s=>$(s,root), dialog=q('dialog'), stage=q('#stage');
   let data, sources=[], active=false, mode='fit', page=1, committed=0, zoom=1, width=900, token=0, anchorOffset=0, suppressScroll=false, hiddenTimer, saveTimer, scrollRAF=0, previousFocus, originScroll, overflowValue, overflowPriority, ro;
-  const key=location.pathname, prefs=storage.get('prefs',{}), cache=new Map(), ratios=new Map();
+  let key=location.pathname,navController,navSerial=0,tocController,tocItems=null;
+  const initialPath=key,prefs=storage.get('prefs',{}),cache=new Map(),ratios=new Map(),toc=q('#toc');
   let metrics=[],chromeScroll=0;
   width=C.clamp(Number(prefs.width)||900,360,1400); mode=prefs.mode==='flow'?'flow':'fit';
   q('#width').value=width; q('#widthValue').textContent=width; q('#auto').checked=!!prefs.auto;
   function savePrefs(){storage.set('prefs',{mode,width,auto:q('#auto').checked});}
   function save(){if(active)storage.set(key,{page,offset:mode==='flow'?position().offset:0});}
   function setStatus(text, retry){const box=q('#status');box.replaceChildren();if(text){const p=document.createElement('span');p.textContent=text;box.append(p);if(retry){const b=document.createElement('button');b.textContent='重试';b.onclick=retry;box.append(b);}}}
-  function wake(){dialog.classList.remove('quiet');clearTimeout(hiddenTimer);hiddenTimer=setTimeout(()=>{if(q('#settings').hidden && !root.activeElement?.closest('#top,#rail'))dialog.classList.add('quiet');},2200);}
-  function hideChrome(){if(!q('#settings').hidden||root.activeElement?.matches('input,select,textarea'))return;if(root.activeElement?.closest('#top,#rail'))stage.focus({preventScroll:true});clearTimeout(hiddenTimer);dialog.classList.add('quiet');}
+  function wake(){dialog.classList.remove('quiet');clearTimeout(hiddenTimer);hiddenTimer=setTimeout(()=>{if(!toc.open&&q('#settings').hidden && !root.activeElement?.closest('#top'))dialog.classList.add('quiet');},2200);}
+  function hideChrome(){if(toc.open||!q('#settings').hidden||root.activeElement?.matches('input,select,textarea'))return;if(root.activeElement?.closest('#top'))stage.focus({preventScroll:true});clearTimeout(hiddenTimer);dialog.classList.add('quiet');}
   async function prepare(){
     const original=$('#mangaFile');
     const fixture=/^(localhost|127\.0\.0\.1)$/.test(location.hostname)?$('#qm-fixture'):null;
@@ -112,14 +132,84 @@ button,a,select{border:1px solid #ffffff24;background:#282c2f;color:inherit;bord
     if(!sources.length)throw Error('此章节没有可显示的图片');
     const ratio=original?.naturalWidth?original.naturalHeight/original.naturalWidth:1.44;
     data.ratio=ratio;
-    q('#title').textContent=[$('h1')?.textContent,$('h2')?.textContent].filter(Boolean).join(' · ')||'漫画阅读';
-    q('#total').textContent='/ '+sources.length;q('#page').max=sources.length;
-    q('#chapters').replaceChildren();
-    const book=location.pathname.match(/^\/comic\/(\d+)\//)?.[1];
-    if(book){for(const [text,id] of [['上一章',data.prevId],['目录',null],['下一章',data.nextId]]){
-      if(id===0)continue; const a=document.createElement('a');a.textContent=text;a.href=`/comic/${book}/`+(id?`${Number(id)}.html`:'');a.onclick=save;q('#chapters').append(a);
-    }}
+    q('#total').textContent=sources.length;q('#page').max=sources.length;
+    renderChapterControls();
   }
+  function bookId(){return key.match(/^\/comic\/(\d+)\//)?.[1];}
+  function chapterLink(label,id){
+    const enabled=!!bookId()&&Number(id)>0,el=document.createElement(enabled?'a':'button');el.textContent=label;
+    if(enabled){el.href=`/comic/${bookId()}/${Number(id)}.html`;el.onclick=e=>{if(e.button||e.metaKey||e.ctrlKey||e.shiftKey||e.altKey)return;e.preventDefault();navigateChapter(el.href);};}else el.disabled=true;
+    return el;
+  }
+  function chapterJump(id,previous){const label=previous?'上一章':'下一章',el=chapterLink(label,id),text=document.createElement('span'),icon=document.createElementNS('http://www.w3.org/2000/svg','svg'),path=document.createElementNS('http://www.w3.org/2000/svg','path');el.className='chapterJump';el.replaceChildren();text.textContent=label;icon.setAttribute('viewBox','0 0 24 24');icon.setAttribute('aria-hidden','true');path.setAttribute('d',previous?'m15 6-6 6 6 6':'m9 6 6 6-6 6');icon.append(path);el.append(...(previous?[icon,text]:[text,icon]));return el;}
+  function renderChapterControls(){
+    const directory=document.createElement('button');directory.textContent='目录';directory.disabled=!bookId();directory.onclick=showDirectory;
+    q('#chapters').replaceChildren(directory,chapterLink('上一章',data.prevId),chapterLink('下一章',data.nextId));
+    q('#total').textContent=sources.length;q('#page').max=sources.length;
+  }
+  async function fetchDocument(url,signal){
+    const response=await fetch(url,{credentials:'same-origin',signal});if(!response.ok)throw Error('加载失败（'+response.status+'）');
+    return new DOMParser().parseFromString(await response.text(),'text/html');
+  }
+  function readRemoteChapter(doc){
+    const fixture=/^(localhost|127\.0\.0\.1)$/.test(location.hostname)?doc.querySelector('#qm-fixture'):null;
+    if(fixture){const next=JSON.parse(fixture.textContent);return {data:next,sources:next.urls};}
+    const packed=[...doc.scripts].find(s=>s.textContent.includes('function(p,a,c,k,e,d)'));if(!packed)throw Error('未找到章节清单');
+    const next=C.parseChapter(packed.textContent,LZString.decompressFromBase64);return {data:next,sources:C.chapterUrls(next,sources[0])};
+  }
+  async function navigateChapter(href,options={}){
+    const url=new URL(href,location.href),match=url.pathname.match(/^\/comic\/(\d+)\/(\d+)\.html$/);
+    if(!match||url.origin!==location.origin||match[1]!==bookId())return;
+    navController?.abort();const serial=++navSerial;cancelGesture();hideDirectory();hideSettings();
+    if(url.pathname===key){host.dataset.navigating='false';setStatus('');return;}
+    save();const controller=new AbortController();navController=controller;let timedOut=false;
+    const timer=setTimeout(()=>{timedOut=true;controller.abort();},20000);host.dataset.navigating='true';setStatus('正在切换章节…');
+    try{
+      const doc=await fetchDocument(url.href,controller.signal),next=readRemoteChapter(doc);
+      if(!active||serial!==navSerial)return;
+      if(Number(next.data.bid)!==Number(match[1])||Number(next.data.cid)!==Number(match[2])||!next.sources.length)throw Error('章节校验失败');
+      ++token;cancelAnimationFrame(scrollRAF);scrollRAF=0;clearTimeout(saveTimer);for(const rec of cache.values())rec.cancel?.();cache.clear();ratios.clear();
+      data=next.data;sources=next.sources;data.ratio=data.ratio||1.44;key=url.pathname;page=1;anchorOffset=0;committed=0;zoom=1;
+      if(options.restore){const saved=C.validProgress(storage.get(key,null),sources.length);page=saved.page;anchorOffset=saved.offset;}
+      if(options.history!==false)history.pushState({quietManga:true},'',url.pathname);
+      document.title=doc.title||[data.bname,data.cname].filter(Boolean).join(' · ');host.dataset.chapter=key;stage.replaceChildren();renderChapterControls();
+      if(mode==='flow')flow({page,offset:anchorOffset});else showPage(page);savePrefs();wake();
+    }catch(e){if(serial===navSerial&&active&&(e.name!=='AbortError'||timedOut))setStatus(timedOut?'切换章节超时':e.message,()=>navigateChapter(url.href,options));}
+    finally{clearTimeout(timer);if(serial===navSerial){navController=null;host.dataset.navigating='false';}}
+  }
+  function parseDirectory(doc){
+    const items=[],seen=new Set();
+    for(const group of doc.querySelectorAll('.chapter-list')){
+      const heading=group.previousElementSibling?.matches('h4')?group.previousElementSibling.textContent.trim():'';
+      const entries=[];
+      for(const a of group.querySelectorAll('a[href]')){
+        const url=new URL(a.getAttribute('href'),location.origin),match=url.pathname.match(/^\/comic\/(\d+)\/(\d+)\.html$/);
+        if(url.origin!==location.origin||!match||match[1]!==bookId()||seen.has(url.pathname))continue;
+        seen.add(url.pathname);entries.push({href:url.pathname,label:a.getAttribute('title')||a.textContent.trim(),group:heading});
+      }
+      entries.sort((a,b)=>a.label.localeCompare(b.label,'zh-CN',{numeric:true}));items.push(...entries);
+    }
+    if(!items.length)throw Error('未找到章节目录');return items;
+  }
+  function renderDirectory(){
+    const list=q('#tocList'),query=q('#tocSearch').value.trim().toLowerCase();list.replaceChildren();let group=null;
+    for(const item of (tocItems||[]).filter(item=>item.label.toLowerCase().includes(query))){
+      if(item.group&&item.group!==group){const heading=document.createElement('h3');heading.textContent=item.group;list.append(heading);group=item.group;}
+      const b=document.createElement('button');b.textContent=item.label;b.dataset.href=item.href;if(item.href===key)b.setAttribute('aria-current','page');b.onclick=()=>navigateChapter(item.href);list.append(b);
+    }
+    q('#tocStatus').textContent=list.children.length?'':'没有匹配的章节';
+  }
+  async function showDirectory(){
+    hideSettings();q('#tocSearch').value='';if(!toc.open)toc.showModal();wake();
+    if(tocItems){renderDirectory();return;}
+    tocController?.abort();const controller=new AbortController();tocController=controller;let timedOut=false;const timer=setTimeout(()=>{timedOut=true;controller.abort();},15000);
+    q('#tocStatus').textContent='正在读取目录…';q('#tocList').replaceChildren();
+    try{const doc=await fetchDocument(`/comic/${bookId()}/`,controller.signal);if(!toc.open||tocController!==controller)return;tocItems=parseDirectory(doc);renderDirectory();}
+    catch(e){if(tocController===controller&&toc.open&&(e.name!=='AbortError'||timedOut)){q('#tocStatus').textContent=timedOut?'目录加载超时':e.message;const b=document.createElement('button');b.textContent='重试';b.onclick=showDirectory;q('#tocList').replaceChildren(b);}}
+    finally{clearTimeout(timer);}
+  }
+  function hideDirectory(){tocController?.abort();tocController=null;if(toc.open)toc.close();wake();}
+
   function load(n,retry=false){
     if(retry){cache.get(n)?.cancel?.();cache.delete(n);}
     if(cache.has(n))return cache.get(n).promise;
@@ -166,6 +256,7 @@ button,a,select{border:1px solid #ffffff24;background:#282c2f;color:inherit;bord
   }
   function flow(pos){++token;setStatus('');zoom=1;q('#zoom').disabled=true;const strip=document.createElement('div');strip.id='strip';strip.style.width=width+'px';
     for(let n=1;n<=sources.length;n++){const el=document.createElement('section');el.className='sheet';el.dataset.page=n;el.setAttribute('aria-label','第 '+n+' 页');el.style.aspectRatio=`1 / ${ratios.get(n)||data.ratio}`;strip.append(el);}
+    const end=document.createElement('section');end.id='chapterEnd';end.setAttribute('aria-label','章节末尾');end.append(chapterJump(data.prevId,true),chapterJump(data.nextId,false));strip.append(end);
     stage.replaceChildren(strip);suppressScroll=true;restore(pos);page=pos.page;resizePos=pos;layoutWidth=stage.clientWidth;layoutHeight=stage.clientHeight;fillWindow();requestAnimationFrame(()=>{suppressScroll=false;});
   }
   function switchMode(next){cancelGesture();if(!sources.length)return;const pos=position();mode=next;savePrefs();q('#fit').setAttribute('aria-pressed',mode==='fit');q('#flow').setAttribute('aria-pressed',mode==='flow');q('#zoom').disabled=mode==='flow';if(mode==='fit'){anchorOffset=pos.offset;showPage(pos.page);}else flow({page:pos.page,offset:anchorOffset||pos.offset});wake();}
@@ -215,6 +306,7 @@ button,a,select{border:1px solid #ffffff24;background:#282c2f;color:inherit;bord
   stage.addEventListener('dblclick',e=>{const r=stage.getBoundingClientRect();toggleZoom(e.clientX-r.left,e.clientY-r.top);});
   stage.addEventListener('scroll',()=>{if(!active||mode!=='flow'||suppressScroll||scrollRAF||stage.clientWidth!==layoutWidth||stage.clientHeight!==layoutHeight)return;scrollRAF=requestAnimationFrame(()=>{scrollRAF=0;page=position().page;anchorOffset=position().offset;fillWindow();clearTimeout(saveTimer);saveTimer=setTimeout(save,200);});},{passive:true});
   function keys(e){if(!active)return;const el=e.composedPath()[0];e.stopImmediatePropagation();wake();
+    if(toc.open){if(e.key==='Escape'){e.preventDefault();hideDirectory();}return;}
     if(el.matches?.('input,select,textarea')){if(e.key==='Enter' && el===q('#page')){e.preventDefault();go(Number(el.value));stage.focus();}else if(e.key==='Escape'){e.preventDefault();hideSettings(true);}return;}
     if(el.matches?.('button,a') && [' ','Enter'].includes(e.key))return;
     if(e.altKey||e.metaKey||e.ctrlKey)return;
@@ -226,7 +318,7 @@ button,a,select{border:1px solid #ffffff24;background:#282c2f;color:inherit;bord
     prepare().then(()=>{if(!active)return;const saved=C.validProgress(storage.get(key,null),sources.length);const explicit=location.hash.match(/(?:^#|&)p=(\d+)/);page=explicit?C.clamp(+explicit[1],1,sources.length):saved.page;anchorOffset=explicit?0:saved.offset;switchMode(mode);}).catch(e=>setStatus(e.message,()=>{close();open();}));wake();
   }
   function stopKey(e){if(active)e.stopImmediatePropagation();}
-  function close(){cancelGesture();hideSettings();save();if(document.fullscreenElement)document.exitFullscreen().catch(()=>{});active=false;++token;clearTimeout(hiddenTimer);clearTimeout(saveTimer);cancelAnimationFrame(scrollRAF);scrollRAF=0;drag=null;for(const rec of cache.values())rec.cancel?.();cache.clear();stage.replaceChildren();dialog.close();q('#launch').hidden=false;document.documentElement.style.removeProperty('overflow');if(overflowValue)document.documentElement.style.setProperty('overflow',overflowValue,overflowPriority);window.removeEventListener('keydown',keys,true);window.removeEventListener('keyup',stopKey,true);window.scrollTo(originScroll.x,originScroll.y);previousFocus?.focus({preventScroll:true});host.dataset.active='false';}
+  function close(){navController?.abort();navSerial++;hideDirectory();cancelGesture();hideSettings();save();if(document.fullscreenElement)document.exitFullscreen().catch(()=>{});active=false;++token;clearTimeout(hiddenTimer);clearTimeout(saveTimer);cancelAnimationFrame(scrollRAF);scrollRAF=0;drag=null;for(const rec of cache.values())rec.cancel?.();cache.clear();stage.replaceChildren();dialog.close();q('#launch').hidden=false;document.documentElement.style.removeProperty('overflow');if(overflowValue)document.documentElement.style.setProperty('overflow',overflowValue,overflowPriority);window.removeEventListener('keydown',keys,true);window.removeEventListener('keyup',stopKey,true);window.scrollTo(originScroll.x,originScroll.y);previousFocus?.focus({preventScroll:true});host.dataset.active='false';if(key!==initialPath){try{sessionStorage.setItem('quiet-manga:exit',key);}catch{}location.replace(key);}}
   q('#launch').onclick=()=>{host.dataset.active='true';open();};q('#exit').onclick=close;q('#fit').onclick=()=>switchMode('fit');q('#flow').onclick=()=>switchMode('flow');q('#prev').onclick=()=>go(page-1);q('#next').onclick=()=>go(page+1);q('#zoom').onclick=()=>{toggleZoom();stage.focus();};
   q('#page').addEventListener('change',e=>{go(Number(e.target.value));stage.focus();});q('#page').addEventListener('keydown',e=>{if(e.key==='Enter'){go(Number(e.target.value));stage.focus();}});
   function hideSettings(focus=false){q('#settings').hidden=true;q('#options').setAttribute('aria-expanded','false');if(focus)q('#options').focus();wake();}
@@ -242,13 +334,16 @@ button,a,select{border:1px solid #ffffff24;background:#282c2f;color:inherit;bord
     try{if(document.fullscreenElement)await document.exitFullscreen();else await document.documentElement.requestFullscreen();syncFullscreen();setStatus('');if(mode==='flow'){resizePos=pos;restore(pos);page=pos.page;labels();requestAnimationFrame(()=>{if(active&&mode==='flow'){restore(pos);resizePos=pos;}});}}
     catch(e){host.dataset.fullscreenError=e.message;fallback();}
   };
-  dialog.addEventListener('cancel',e=>{e.preventDefault();if(active)close();});dialog.addEventListener('pointermove',e=>{const box=dialog.getBoundingClientRect();if(e.clientY-box.top<20||box.right-e.clientX<20||(!dialog.classList.contains('quiet')&&e.composedPath().some(el=>el.id==='top'||el.id==='rail'))||!q('#settings').hidden)wake();},{passive:true});dialog.addEventListener('click',e=>{e.stopPropagation();});
+  dialog.addEventListener('cancel',e=>{e.preventDefault();if(active)close();});dialog.addEventListener('pointermove',e=>{const box=dialog.getBoundingClientRect();if(e.clientY-box.top<20||(!dialog.classList.contains('quiet')&&e.composedPath().some(el=>el.id==='top'))||!q('#settings').hidden)wake();},{passive:true});dialog.addEventListener('click',e=>{e.stopPropagation();});
   stage.addEventListener('scroll',()=>{const delta=stage.scrollTop-chromeScroll;chromeScroll=stage.scrollTop;if(!active||suppressScroll||gestureRAF)return;if(delta>2)hideChrome();else if(delta< -2)wake();},{passive:true});
+  q('#tocClose').onclick=hideDirectory;q('#tocSearch').oninput=()=>{if(tocItems)renderDirectory();};toc.addEventListener('cancel',e=>{e.preventDefault();hideDirectory();});toc.addEventListener('click',e=>{if(e.target===toc){const b=toc.getBoundingClientRect();if(e.clientX<b.left||e.clientX>b.right||e.clientY<b.top||e.clientY>b.bottom)hideDirectory();}});
+  window.addEventListener('popstate',()=>{if(active)navigateChapter(location.href,{history:false,restore:true});});
   window.addEventListener('pagehide',save);
   let resizePos={page:1,offset:0},layoutWidth=0,layoutHeight=0;
   ro=new ResizeObserver(()=>{if(!active||!data)return;if(mode==='fit'){const img=q('#single img');if(img)fitImage(img);}else if(resizePos){restore(resizePos);}layoutWidth=stage.clientWidth;layoutHeight=stage.clientHeight;resizePos=position();});ro.observe(stage);
   stage.addEventListener('scroll',()=>{if(mode==='flow'&&stage.clientWidth===layoutWidth&&stage.clientHeight===layoutHeight)resizePos=position();},{passive:true});
-  if(prefs.auto){let attempts=0;const timer=setInterval(()=>{if($('#mangaFile')?.naturalWidth){clearInterval(timer);q('#launch').click();}else if(++attempts>=60)clearInterval(timer);},250);}
+  let skipAuto=false;try{skipAuto=sessionStorage.getItem('quiet-manga:exit')===key;sessionStorage.removeItem('quiet-manga:exit');}catch{}
+  if(prefs.auto&&!skipAuto){let attempts=0;const timer=setInterval(()=>{if($('#mangaFile')?.naturalWidth){clearInterval(timer);q('#launch').click();}else if(++attempts>=60)clearInterval(timer);},250);}
 })();
 
 })();

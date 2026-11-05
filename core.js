@@ -33,8 +33,18 @@
     base.search = '';
     return data.files.map(f => { const u = new URL(f, base); u.search = query; return u.href; });
   }
+  function chapterUrls(data,current) {
+    const base=new URL(current),path=data.path,sl=data.sl;
+    if(!/^https?:$/.test(base.protocol)||typeof path!=='string'||!path.startsWith('/')||path.startsWith('//')||!path.endsWith('/')||/[?#\\]/.test(path))throw Error('章节图片路径不可用');
+    let decoded;try{decoded=decodeURIComponent(path);}catch{throw Error('章节图片路径不可用');}
+    if(decoded.split('/').includes('..')||decoded.includes('\\')||decoded.startsWith('//'))throw Error('章节图片路径不可用');
+    if(!sl||!/^\d{1,16}$/.test(String(sl.e))||!/^[A-Za-z0-9_+\/=-]{8,256}$/.test(String(sl.m)))throw Error('章节图片签名不可用');
+    const folder=new URL(path,base.origin);if(folder.origin!==base.origin)throw Error('章节图片来源不可用');
+    folder.search=new URLSearchParams({e:String(sl.e),m:sl.m}).toString();
+    return urls(data,folder.href);
+  }
   function fit(w,h,vw,vh) { const scale = Math.min(vw / w, vh / h, 1); return {w:w*scale,h:h*scale}; }
   function validProgress(p,n) { return p && Number.isFinite(p.page) ? {page:clamp(Math.round(p.page),1,n),offset:clamp(Number(p.offset)||0,0,1)} : {page:1,offset:0}; }
-  const api = {clamp,unquote,parseChapter,urls,fit,validProgress};
+  const api = {clamp,unquote,parseChapter,urls,chapterUrls,fit,validProgress};
   if (typeof module !== 'undefined') module.exports = api; else root.QMCore = api;
 })(typeof window === 'undefined' ? globalThis : window);
