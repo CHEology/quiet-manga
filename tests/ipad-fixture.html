@@ -1,0 +1,7 @@
+<!doctype html><html lang="zh"><head><meta charset="utf-8"><meta name="viewport" content="width=980"><title>触屏漫画样本</title></head><body>
+<img id="mangaFile" src="/test-image?n=101"><script id="qm-fixture" type="application/json"></script><script>
+Object.defineProperty(navigator,'maxTouchPoints',{configurable:true,value:5});
+localStorage.removeItem('quiet-manga:prefs');localStorage.removeItem('quiet-manga:/comic/900/1.html');
+history.replaceState(null,'','/comic/900/1.html');
+document.querySelector('#qm-fixture').textContent=JSON.stringify({bid:900,cid:1,prevId:0,nextId:2,urls:Array.from({length:20},(_,i)=>'/test-image?n='+(101+i))});
+</script><script src="/quiet-manga.user.js"></script></body></html>
