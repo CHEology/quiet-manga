@@ -1,0 +1,21 @@
+RUNNING
+PASS 整页不裁切
+PASS 图片失败显示重试并可恢复
+PASS 快速连按以最后目标为准
+PASS 输入页码 Enter 生效
+PASS 按钮焦点不吞方向键
+PASS 横页适配
+PASS 首尾不越界
+PASS 单击图片不翻页
+PASS 放大和 Esc 恢复
+PASS 连续模式保留页内位置
+PASS 连续图片填满设定宽度
+PASS 宽度变化保持位置
+PASS 连续图片 DOM 有界
+PASS 退出及重新进入恢复
+PASS 显式链接页码优先
+PASS 慢图不覆盖新目标
+PASS 超时显示重试且可离开
+PASS 重复开关不累积入口
+
+18 PASS / 0 FAIL

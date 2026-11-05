@@ -1,0 +1,20 @@
+{
+  "name": "quiet-manga",
+  "version": "1.0.6",
+  "description": "A focused Manhuagui reader userscript",
+  "directories": {
+    "test": "tests"
+  },
+  "scripts": {
+    "build": "node build.cjs",
+    "test": "node --test tests/core.test.cjs",
+    "serve": "python3 tests/server.py"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "MIT",
+  "type": "commonjs",
+  "devDependencies": {
+    "lz-string": "^1.5.0"
+  }
+}
