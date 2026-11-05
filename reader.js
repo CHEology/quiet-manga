@@ -3,7 +3,7 @@
   if (document.getElementById('quiet-manga-host')) return;
   const C = QMCore, $ = (s,r=document) => r.querySelector(s);
   const storage = {get(k,d) {try {return JSON.parse(localStorage.getItem('quiet-manga:'+k)) ?? d;} catch {return d;}},set(k,v) {try{localStorage.setItem('quiet-manga:'+k,JSON.stringify(v));}catch{}}};
-  const host = document.createElement('div'); host.id='quiet-manga-host'; host.dataset.version='1.5.0';const touchDevice=navigator.maxTouchPoints>0;if(touchDevice)host.dataset.touch='true';
+  const host = document.createElement('div'); host.id='quiet-manga-host'; host.dataset.version='1.6.0';const touchDevice=navigator.maxTouchPoints>0;if(touchDevice)host.dataset.touch='true';
   host.setAttribute('data-darkreader-ignore',''); document.documentElement.append(host);
   const root = host.attachShadow({mode:'open'});
   root.innerHTML = `<style>
@@ -40,6 +40,10 @@ button,a,select{border:1px solid var(--qm-stroke,#ffffff24);background:var(--qm-
 @media(prefers-reduced-motion:reduce){*{transition:none!important;scroll-behavior:auto!important}}
 :host([data-palette="light"]){color-scheme:light;--qm-canvas:#eeede9;--qm-ink:#282c31;--qm-card:#fcfbf8;--qm-panel:#fcfbf8;--qm-control:#f4f3ef;--qm-hover:#e7e7e2;--qm-entry:#fcfbf8;--qm-chosen:#e7edf4;--qm-text:#253345;--qm-tool:#374248;--qm-high:#1c2731;--qm-muted:#57636b;--qm-soft:#475763;--qm-heading:#485966;--qm-secondary:#4d5b66;--qm-jump:#374855;--qm-hint:#5c675f;--qm-blank:#e5e5df;--qm-field:#f3f2ef;--qm-blue:#356da5;--qm-entryLine:#547da8;--qm-panelLine:#c4c8c9;--qm-cardLine:#c5c9c9;--qm-scroll:#aaaead;--qm-bar:#f5f4f0f5;--qm-barFade:#f5f4f0dc;--qm-overlay:#faf9f5f5;--qm-stroke:#26364824;--qm-statusStroke:#26364828;--qm-fieldStroke:#26364830;--qm-line:#2e3c4b26;--qm-wash:#1c35550c;--qm-wash2:#1c35550b;--qm-active:#20354a12;--qm-subtle:#ffffff58;--qm-selectedText:#397cb433;--qm-blueMuted:#397cb466;--qm-shadow:#2434481c;--qm-shade:#141c305c}
 :host([data-palette="light"]) dialog:not(#toc)::backdrop{background:#eeede9}:host([data-palette="light"]) #toc::backdrop{background:#141c305c}
+.flowPair{display:flex;direction:ltr;margin-bottom:16px}
+:host([data-mode=fit][data-zoom="1"]) #stage{touch-action:pan-y}
+#strip[data-direction=rtl] .flowPair{flex-direction:row-reverse}
+.flowPair > .sheet{flex-basis:0;min-width:0;width:auto;margin:0}
 #single .spreadFrame{display:flex;align-items:stretch;flex:none;margin:0;direction:ltr}
 #single.zoomed .spreadFrame{margin:0 auto}
 #single .spreadFrame img{height:100%;width:auto;min-width:0;flex:none;margin:0}
@@ -74,7 +78,7 @@ button,a,select{border:1px solid var(--qm-stroke,#ffffff24);background:var(--qm-
 <button id="exit" class="icon" aria-label="退出" title="退出阅读器"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></button></div></div></header>
 <main id="stage" tabindex="0" aria-label="漫画画布"></main><div id="status" role="status" aria-live="polite"></div>
 <aside id="settings" aria-label="阅读设置" hidden><h2>阅读设置</h2>
-<section id="layoutPrefs" aria-label="整页排版">
+<section id="layoutPrefs" aria-label="页面排版">
   <div class="layoutRow"><span id="layoutLabel">排版</span><div class="pairSegments" role="group" aria-labelledby="layoutLabel">
     <button id="oneUp" aria-pressed="true"><svg viewBox="0 0 20 20" aria-hidden="true"><rect x="5.5" y="3" width="9" height="14" rx="1"/></svg>单页</button>
     <button id="twoUp" aria-pressed="false"><svg viewBox="0 0 20 20" aria-hidden="true"><rect x="1.5" y="3.5" width="17" height="13" rx="1"/><path d="M10 3.5v13"/></svg>双页</button>
@@ -106,11 +110,10 @@ button,a,select{border:1px solid var(--qm-stroke,#ffffff24);background:var(--qm-
   }
 
   function usesSpreads() {
-    return mode === 'fit' && layout.double && wideEnough();
+    return layout.double && wideEnough();
   }
 
   function updateLayoutSettings() {
-    q('#layoutPrefs').hidden = mode !== 'fit';
     q('#widthLabel').hidden = mode !== 'flow';
     q('#pairDetails').hidden = !layout.double;
     q('#spreadHint').hidden = wideEnough();
@@ -122,15 +125,22 @@ button,a,select{border:1px solid var(--qm-stroke,#ffffff24);background:var(--qm-
 
   function changeLayout(changes) {
     if (Object.keys(changes).every(key => layout[key] === changes[key])) return;
+    const anchor = position();
     Object.assign(layout, changes);
     storage.set(spreadKey, layout);
     updateLayoutSettings();
+    if ('firstAlone' in changes) chapterSpreads.reset();
+    if (mode === 'flow') {
+      if ('direction' in changes) q('#strip').dataset.direction = layout.direction;
+      else reflowStrip(anchor);
+      labels();
+      return;
+    }
     if ('direction' in changes) {
       const frame = q('.spreadFrame');
       if (frame) frame.style.flexDirection = layout.direction === 'rtl' ? 'row-reverse' : 'row';
       labels();
     } else {
-      if ('firstAlone' in changes) chapterSpreads.reset();
       go(page);
     }
   }
@@ -271,9 +281,14 @@ button,a,select{border:1px solid var(--qm-stroke,#ffffff24);background:var(--qm-
       img.onload=()=>img.naturalWidth?finish():finish(Error('图片为空'));img.onerror=()=>finish(Error('图片加载失败'));rec.cancel=()=>{finish(Error('已取消'));img.removeAttribute('src');};img.src=sources[n-1];
     });rec.promise.catch(()=>{});cache.set(n,rec);return rec.promise;
   }
-  function prune(){for(const [n,r] of cache){if(Math.abs(n-page)>3){r.cancel?.();cache.delete(n);}}}
+  function prune(first=page-3,last=page+3){for(const [n,r] of cache){if(n<first||n>last){r.cancel?.();cache.delete(n);}}}
+  function currentOpening() {
+    if (mode === 'fit') return visiblePages.includes(page) ? visiblePages : [page];
+    const row = flowSheets[page - 1]?.parentElement;
+    return row?.classList.contains('flowPair') ? Array.from(row.children, sheet => +sheet.dataset.page) : [page];
+  }
   function labels() {
-    const pages = mode === 'fit' && visiblePages.includes(page) ? visiblePages : [page];
+    const pages = currentOpening();
     const first = pages[0], last = pages[pages.length - 1], pair = first !== last;
     const pager = q('#pager'), range = q('#pageRange');
     q('#page').value = page;
@@ -409,7 +424,7 @@ button,a,select{border:1px solid var(--qm-stroke,#ffffff24);background:var(--qm-
       pendingSteps.push(step);
       return;
     }
-    const group = mode === 'fit' && visiblePages.includes(page) ? visiblePages : [page];
+    const group = currentOpening();
     let target;
     while (step) {
       target = (step > 0 ? group.at(-1) : group[0]) + step;
@@ -421,34 +436,145 @@ button,a,select{border:1px solid var(--qm-stroke,#ffffff24);background:var(--qm-
     cancelGesture();
     if (mode === 'fit') showPage(target, false, step);
     else go(target);
+  }
+  let flowSheets = [], loadedSheets = new Set();
+  function position(at=0) {
+    if (mode !== 'flow' || !flowSheets.length) return {page, offset:0};
+    const y = stage.scrollTop + at;
+    let low = 0, high = flowSheets.length - 1;
+    while (low < high) {
+      const mid = Math.floor((low + high) / 2), sheet = flowSheets[mid];
+      if (sheet.offsetTop + sheet.offsetHeight <= y + 1) low = mid + 1;
+      else high = mid;
+    }
+    const sheet = flowSheets[low], row = sheet.parentElement;
+    const keepPage = row.classList.contains('flowPair') && flowSheets[page-1]?.parentElement === row;
+    return {page:keepPage ? page : low + 1, offset:C.clamp((y - sheet.offsetTop) / sheet.offsetHeight, 0, 1)};
+  }
+  function restore(pos,at=0){
+    const sheet = flowSheets[pos.page - 1];
+    if (sheet) stage.scrollTop = sheet.offsetTop + sheet.offsetHeight * pos.offset - at;
+    chromeScroll=stage.scrollTop;resizePos=position();
+  }
+  function sizeFlowPair(row) {
+    const [first, second] = row.children;
+    const aspect = leaf => 1 / (ratios.get(+leaf.dataset.page) || data.ratio);
+    const firstWidth = aspect(first), total = firstWidth + aspect(second);
+    first.style.flexGrow = 100 * firstWidth / total;
+    second.style.flexGrow = 100 * aspect(second) / total;
+    row.style.aspectRatio = String(total);
+  }
+  function arrangeStrip(strip) {
+    const paired = usesSpreads(), content = document.createDocumentFragment();
+    const end = strip.querySelector('#chapterEnd');
+    strip.dataset.paired = paired;
+    strip.dataset.direction = layout.direction;
+    for (let i = 0; i < flowSheets.length; i++) {
+      const leaf = flowSheets[i], n = i + 1;
+      const single = (layout.firstAlone && n === 1) || ratios.get(n) <= 1 || ratios.get(n + 1) <= 1;
+      if (paired && !single && flowSheets[i+1]) {
+        const row = document.createElement('div');
+        row.className = 'flowPair';
+        row.append(leaf, flowSheets[++i]);
+        sizeFlowPair(row);
+        content.append(row);
+      } else {
+        content.append(leaf);
+      }
+    }
+    strip.replaceChildren(content, end);
+  }
+  function reflowStrip(anchor) {
+    const strip = q('#strip');
+    if (!strip) return;
+    arrangeStrip(strip);
+    page = anchor.page;
+    restore(anchor);
+    fillWindow();
+  }
+  function sheetError(el,n,message){el.replaceChildren();const p=document.createElement('div');p.className='placeholder';p.textContent=message;const b=document.createElement('button');b.textContent='重试第 '+n+' 页';b.onclick=()=>{el.dataset.state='';hydrate(n,true);};p.append(b);el.append(p);el.dataset.state='error';}
+  async function hydrate(n,retry=false) {
+    const el = flowSheets[n-1];
+    if (!el || el.dataset.state) return;
+    loadedSheets.add(n);
+    el.dataset.state = 'loading';
+    const generation = token, request = load(n,retry);
+    const current = () => active && generation === token && el.isConnected && cache.get(n)?.promise === request;
+    try {
+      const img = await request;
+      if (!current()) return;
+      const anchor = position(), ratio = ratios.get(n);
+      img.style.removeProperty('width');img.style.removeProperty('height');
+      el.style.aspectRatio = '1 / ' + ratio;
+      el.replaceChildren(img);el.dataset.state = 'ready';
+      if (el.parentElement.classList.contains('flowPair')) {
+        if (ratio <= 1) arrangeStrip(q('#strip'));
+        else sizeFlowPair(el.parentElement);
+      }
+      suppressScroll = true;
+      restore(anchor);
+      if (q('#strip').dataset.paired === 'true') fillWindow();
+      requestAnimationFrame(()=>{suppressScroll=false;});
+    } catch(error) {
+      if (current()) sheetError(el,n,error.message);
+    }
+  }
+  function fillWindow() {
+    const paired = q('#strip')?.dataset.paired === 'true';
+    const first = Math.max(1,page-2);
+    let last = Math.min(sources.length,page+2);
+    if (paired) {
+      const bottom = position(stage.clientHeight).page;
+      last = Math.min(sources.length,Math.max(page,bottom)+3);
+    }
+    for (let n=first; n<=last; n++) hydrate(n);
+    for (const n of loadedSheets) {
+      if (n < first-1 || n > last+1) {
+        flowSheets[n-1].replaceChildren();
+        flowSheets[n-1].dataset.state='';
+        loadedSheets.delete(n);
+      }
+    }
+    prune(first-1,last+1);labels();
+  }
+  function flow(pos) {
+    ++token;setStatus('');zoom=1;
+    const strip=document.createElement('div');strip.id='strip';
+    loadedSheets.clear();
+    flowSheets = sources.map((_,i)=>{
+      const el=document.createElement('section'),n=i+1;
+      el.className='sheet';el.dataset.page=n;el.setAttribute('aria-label','第 '+n+' 页');
+      el.style.aspectRatio='1 / '+(ratios.get(n)||data.ratio);return el;
+    });
+    const end=document.createElement('section');end.id='chapterEnd';end.setAttribute('aria-label','章节末尾');end.append(chapterJump(data.prevId,true),chapterJump(data.nextId,false));strip.append(end);
+    stage.replaceChildren(strip);syncWidth();suppressScroll=true;
+    reflowStrip(pos);layoutWidth=stage.clientWidth;layoutHeight=stage.clientHeight;
+    requestAnimationFrame(()=>{suppressScroll=false;});
+  }
+  function switchMode(next) {
+    if (!sources.length || (next === mode && (q('#strip') || q('#single')))) return;
+    touch.reset();cancelGesture();
+    const pos = position();
+    if (next === 'fit' && flowSheets.length) {
+      // Flow may have discovered a foldout since the last paged opening.
+      chapterSpreads.reset();
+      const row = flowSheets[pos.page - 1].parentElement;
+      if (row.classList.contains('flowPair') && [...row.children].every(el => ratios.get(+el.dataset.page) > 1)) {
+        chapterSpreads.remember(Array.from(row.children,el => +el.dataset.page));
+      }
+    }
+    mode=next;pendingSteps=[];visiblePages=[];pendingSpread=false;
+    updateLayoutSettings();savePrefs();
+    q('#fit').setAttribute('aria-pressed', mode==='fit');
+    q('#flow').setAttribute('aria-pressed', mode==='flow');
+    if (mode==='fit') {
+      flowSheets=[];loadedSheets.clear();anchorOffset=pos.offset;showPage(pos.page);
+    } else {
+      flow({page:pos.page,offset:anchorOffset||pos.offset});
+    }
     wake();
   }
-  function position(at=0){
-    if(mode!=='flow')return {page,offset:0};
-    const y=stage.scrollTop+at;const sheets=[...stage.querySelectorAll('.sheet')];
-    const el=sheets.find(e=>e.offsetTop+e.offsetHeight>y+1)||sheets.at(-1);
-    return el?{page:Number(el.dataset.page),offset:C.clamp((y-el.offsetTop)/el.offsetHeight,0,1)}:{page,offset:0};
-  }
-  function restore(pos,at=0){const el=stage.querySelector(`[data-page="${pos.page}"]`);if(el)stage.scrollTop=el.offsetTop+el.offsetHeight*pos.offset-at;chromeScroll=stage.scrollTop;resizePos=position();}
-  function sheetError(el,n,message){el.replaceChildren();const p=document.createElement('div');p.className='placeholder';p.textContent=message;const b=document.createElement('button');b.textContent='重试第 '+n+' 页';b.onclick=()=>{el.dataset.state='';load(n,true);hydrate(n);};p.append(b);el.append(p);el.dataset.state='error';}
-  async function hydrate(n){
-    const el=stage.querySelector(`[data-page="${n}"]`);if(!el||el.dataset.state)return;el.dataset.state='loading';const generation=token;
-    try{const img=await load(n);if(!active||generation!==token||!el.isConnected)return;
-      const before=position();img.style.removeProperty('width');img.style.removeProperty('height');el.style.aspectRatio=`1 / ${ratios.get(n)}`;el.replaceChildren(img);el.dataset.state='ready';suppressScroll=true;restore(before);requestAnimationFrame(()=>{suppressScroll=false;});
-    }catch(e){if(active&&generation===token&&el.isConnected&&Math.abs(n-page)<=3)sheetError(el,n,e.message);}
-  }
-  function fillWindow(){
-    for(let n=Math.max(1,page-2);n<=Math.min(sources.length,page+2);n++)hydrate(n);
-    for(const el of stage.querySelectorAll('.sheet')){if(Math.abs(Number(el.dataset.page)-page)>3 && el.dataset.state){el.replaceChildren();el.dataset.state='';}}
-    prune();labels();
-  }
-  function flow(pos){++token;setStatus('');zoom=1;const strip=document.createElement('div');strip.id='strip';strip.style.width=width+'px';
-    for(let n=1;n<=sources.length;n++){const el=document.createElement('section');el.className='sheet';el.dataset.page=n;el.setAttribute('aria-label','第 '+n+' 页');el.style.aspectRatio=`1 / ${ratios.get(n)||data.ratio}`;strip.append(el);}
-    const end=document.createElement('section');end.id='chapterEnd';end.setAttribute('aria-label','章节末尾');end.append(chapterJump(data.prevId,true),chapterJump(data.nextId,false));strip.append(end);
-    stage.replaceChildren(strip);syncWidth();suppressScroll=true;restore(pos);page=pos.page;resizePos=pos;layoutWidth=stage.clientWidth;layoutHeight=stage.clientHeight;fillWindow();requestAnimationFrame(()=>{suppressScroll=false;});
-  }
-  function switchMode(next){touch.reset();cancelGesture();if(!sources.length)return;const pos=position();mode=next;pendingSteps=[];visiblePages=[];pendingSpread=false;updateLayoutSettings();savePrefs();q('#fit').setAttribute('aria-pressed',mode==='fit');q('#flow').setAttribute('aria-pressed',mode==='flow');if(mode==='fit'){anchorOffset=pos.offset;showPage(pos.page);}else flow({page:pos.page,offset:anchorOffset||pos.offset});wake();}
-  function go(n){pendingSteps=[];touch.reset();cancelGesture();if(!sources.length)return;if(mode==='fit')showPage(n);else{page=C.clamp(Math.round(n)||1,1,sources.length);restore({page,offset:0});fillWindow();save();}wake();}
+  function go(n){pendingSteps=[];touch.reset();cancelGesture();if(!sources.length)return;if(mode==='fit')showPage(n);else{page=C.clamp(Math.round(n)||1,1,sources.length);restore({page,offset:0});fillWindow();save();wake();}}
   function setZoom(next,x=stage.clientWidth/2,y=stage.clientHeight/2,anchor){
     if(mode!=='fit'||committed!==page)return;const img=fitSurface();if(!img)return;
     const rect=img.getBoundingClientRect(),box=stage.getBoundingClientRect();const rx=anchor?.rx??C.clamp((box.left+x-rect.left)/rect.width,0,1),ry=anchor?.ry??C.clamp((box.top+y-rect.top)/rect.height,0,1);
@@ -458,7 +584,7 @@ button,a,select{border:1px solid var(--qm-stroke,#ffffff24);background:var(--qm-
   function toggleZoom(x,y){setZoom(zoom===1?2.5:1,x,y);}
   function setWidth(next,anchor,y=0){
     const pos=anchor||position(),oldPage=page;width=C.clamp(Math.round(next),Math.min(widthMin(),widthMax()),widthMax());syncWidth();
-    const strip=q('#strip');if(strip){restore(pos,y);page=resizePos.page;anchorOffset=resizePos.offset;if(page!==oldPage)fillWindow();else labels();}
+    const strip=q('#strip');if(strip){restore(pos,y);page=resizePos.page;anchorOffset=resizePos.offset;if(page!==oldPage||strip.dataset.paired==='true')fillWindow();else labels();}
     if(!anchor)savePrefs();
   }
   // Chrome trackpad pinch emits ctrl+wheel. Horizontal two-finger scroll
@@ -489,6 +615,8 @@ button,a,select{border:1px solid var(--qm-stroke,#ffffff24);background:var(--qm-
   const touch=bindReadingTouch(stage,{
     enabled:()=>active&&!toc.open&&!!sources.length,
     dismissed:()=>dismissedTouch,
+    canSwipe:()=>mode==='fit' && zoom===1,
+    swipe(dx){const step=dx<0?1:-1;turnPage(usesSpreads() && layout.direction==='rtl'?-step:step);},
     begin(p){
       cancelGesture();const box=stage.getBoundingClientRect();
       if(mode==='flow'){
@@ -512,7 +640,8 @@ button,a,select{border:1px solid var(--qm-stroke,#ffffff24);background:var(--qm-
   stage.addEventListener('pointerup',()=>drag=null);stage.addEventListener('pointercancel',()=>drag=null);
   stage.addEventListener('dblclick',e=>{if(touch.recent())return;const r=stage.getBoundingClientRect();toggleZoom(e.clientX-r.left,e.clientY-r.top);});
   stage.addEventListener('scroll',()=>{if(!active||mode!=='flow'||suppressScroll||scrollRAF||stage.clientWidth!==layoutWidth||stage.clientHeight!==layoutHeight)return;scrollRAF=requestAnimationFrame(()=>{scrollRAF=0;page=position().page;anchorOffset=position().offset;fillWindow();clearTimeout(saveTimer);saveTimer=setTimeout(save,200);});},{passive:true});
-  function keys(e){if(!active)return;const el=e.composedPath()[0];e.stopImmediatePropagation();wake();
+  function keys(e){if(!active)return;const el=e.composedPath()[0];e.stopImmediatePropagation();
+    if(mode !== 'fit' || e.key === 'Tab') wake();
     if(toc.open){if(e.key==='Escape'){e.preventDefault();hideDirectory();}return;}
     if(el.matches?.('input,select,textarea')){if(e.key==='Enter' && el===q('#page')){e.preventDefault();go(Number(el.value));stage.focus();}else if(e.key==='Escape'){e.preventDefault();hideSettings(true);}return;}
     if(el.matches?.('button,a') && [' ','Enter'].includes(e.key))return;
@@ -525,8 +654,13 @@ button,a,select{border:1px solid var(--qm-stroke,#ffffff24);background:var(--qm-
     prepare().then(()=>{if(!active)return;if(initialTouchWidth){width=Math.round(widthMax()*.92);initialTouchWidth=false;}syncWidth();const saved=C.validProgress(storage.get(key,null),sources.length);const explicit=location.hash.match(/(?:^#|&)p=(\d+)/);page=explicit?C.clamp(+explicit[1],1,sources.length):saved.page;anchorOffset=explicit?0:saved.offset;switchMode(mode);}).catch(e=>setStatus(e.message,()=>{close();open();}));wake();
   }
   function stopKey(e){if(active)e.stopImmediatePropagation();}
-  function close(){pendingSteps=[];pendingSpread=false;visiblePages=[];touch.reset();navController?.abort();navSerial++;hideDirectory();cancelGesture();hideSettings();save();if(document.fullscreenElement)document.exitFullscreen().catch(()=>{});active=false;++token;clearTimeout(hiddenTimer);clearTimeout(saveTimer);cancelAnimationFrame(scrollRAF);scrollRAF=0;drag=null;for(const rec of cache.values())rec.cancel?.();cache.clear();stage.replaceChildren();dialog.close();releaseViewport();q('#launch').hidden=false;document.documentElement.style.removeProperty('overflow');if(overflowValue)document.documentElement.style.setProperty('overflow',overflowValue,overflowPriority);window.removeEventListener('keydown',keys,true);window.removeEventListener('keyup',stopKey,true);window.scrollTo(originScroll.x,originScroll.y);previousFocus?.focus({preventScroll:true});host.dataset.active='false';if(key!==initialPath){try{sessionStorage.setItem('quiet-manga:exit',key);}catch{}location.replace(key);}}
-  q('#launch').onclick=()=>{host.dataset.active='true';open();};q('#exit').onclick=close;q('#fit').onclick=()=>switchMode('fit');q('#flow').onclick=()=>switchMode('flow');q('#prev').onclick=()=>turnPage(-1);q('#next').onclick=()=>turnPage(1);
+  function close(){pendingSteps=[];pendingSpread=false;visiblePages=[];touch.reset();navController?.abort();navSerial++;hideDirectory();cancelGesture();hideSettings();save();flowSheets=[];loadedSheets.clear();if(document.fullscreenElement)document.exitFullscreen().catch(()=>{});active=false;++token;clearTimeout(hiddenTimer);clearTimeout(saveTimer);cancelAnimationFrame(scrollRAF);scrollRAF=0;drag=null;for(const rec of cache.values())rec.cancel?.();cache.clear();stage.replaceChildren();dialog.close();releaseViewport();q('#launch').hidden=false;document.documentElement.style.removeProperty('overflow');if(overflowValue)document.documentElement.style.setProperty('overflow',overflowValue,overflowPriority);window.removeEventListener('keydown',keys,true);window.removeEventListener('keyup',stopKey,true);window.scrollTo(originScroll.x,originScroll.y);previousFocus?.focus({preventScroll:true});host.dataset.active='false';if(key!==initialPath){try{sessionStorage.setItem('quiet-manga:exit',key);}catch{}location.replace(key);}}
+  q('#launch').onclick=()=>{host.dataset.active='true';open();};q('#exit').onclick=close;q('#fit').onclick=()=>switchMode('fit');q('#flow').onclick=()=>switchMode('flow');for(const [button,step] of [[q('#prev'),-1],[q('#next'),1]]){
+    button.onclick=event=>{
+      if(event.detail>0){stage.focus({preventScroll:true});wake();}
+      turnPage(step);
+    };
+  }
   q('#page').addEventListener('change',e=>{go(Number(e.target.value));stage.focus();});q('#page').addEventListener('keydown',e=>{if(e.key==='Enter'){go(Number(e.target.value));stage.focus();}});
   function hideSettings(focus=false){q('#settings').hidden=true;q('#options').setAttribute('aria-expanded','false');if(focus)q('#options').focus();wake();}
   function dismissSettings(e){if(e.type==='pointerdown')dismissedTouch=e.pointerType==='touch'&&!q('#settings').hidden;if(!q('#settings').hidden&&!e.composedPath().includes(q('#settings'))&&!e.composedPath().includes(q('#options')))hideSettings();}
@@ -542,7 +676,7 @@ button,a,select{border:1px solid var(--qm-stroke,#ffffff24);background:var(--qm-
     catch(e){host.dataset.fullscreenError=e.message;fallback();}
   };
   dialog.addEventListener('cancel',e=>{e.preventDefault();if(active)close();});dialog.addEventListener('pointermove',e=>{if(e.pointerType==='touch')return;const box=dialog.getBoundingClientRect();if(e.clientY-box.top<20||(!dialog.classList.contains('quiet')&&e.composedPath().some(el=>el.id==='top'))||!q('#settings').hidden)wake();},{passive:true});dialog.addEventListener('click',e=>{e.stopPropagation();});
-  stage.addEventListener('scroll',()=>{const delta=stage.scrollTop-chromeScroll;chromeScroll=stage.scrollTop;if(!active||suppressScroll||gestureRAF)return;if(delta>2)hideChrome();else if(delta< -2)wake();},{passive:true});
+  stage.addEventListener('scroll',()=>{const delta=stage.scrollTop-chromeScroll;chromeScroll=stage.scrollTop;if(!active||mode!=='flow'||suppressScroll||gestureRAF)return;if(delta>2)hideChrome();else if(delta< -2)wake();},{passive:true});
   q('#tocClose').onclick=hideDirectory;q('#tocSearch').oninput=()=>{if(tocItems)renderDirectory();};toc.addEventListener('cancel',e=>{e.preventDefault();hideDirectory();});toc.addEventListener('click',e=>{if(e.target===toc){const b=toc.getBoundingClientRect();if(e.clientX<b.left||e.clientX>b.right||e.clientY<b.top||e.clientY>b.bottom)hideDirectory();}});
   window.addEventListener('popstate',()=>{if(active)navigateChapter(location.href,{history:false,restore:true});});
   window.addEventListener('pagehide',save);
@@ -554,7 +688,9 @@ button,a,select{border:1px solid var(--qm-stroke,#ffffff24);background:var(--qm-
     updateLayoutSettings();
     if(mode==='fit' && requestedDouble!==usesSpreads()){
       pendingSteps=[];showPage(page);
-    }else if(mode==='fit'){const img=fitSurface();if(img){fitImage(img);if(touchDevice&&zoom>1&&fitCenter){stage.scrollLeft=img.offsetLeft+fitCenter.rx*img.clientWidth-stage.clientWidth/2;stage.scrollTop=img.offsetTop+fitCenter.ry*img.clientHeight-stage.clientHeight/2;rememberFitCenter();}}}else if(resizePos){restore(resizePos);}layoutWidth=stage.clientWidth;layoutHeight=stage.clientHeight;resizePos=position();});ro.observe(stage);
+    }else if(mode==='fit'){const img=fitSurface();if(img){fitImage(img);if(touchDevice&&zoom>1&&fitCenter){stage.scrollLeft=img.offsetLeft+fitCenter.rx*img.clientWidth-stage.clientWidth/2;stage.scrollTop=img.offsetTop+fitCenter.ry*img.clientHeight-stage.clientHeight/2;rememberFitCenter();}}}else if(q('#strip') && (q('#strip').dataset.paired === 'true') !== usesSpreads()){
+      reflowStrip(resizePos);
+    }else if(resizePos){restore(resizePos);if(q('#strip')?.dataset.paired==='true')fillWindow();}layoutWidth=stage.clientWidth;layoutHeight=stage.clientHeight;resizePos=position();});ro.observe(stage);
   stage.addEventListener('scroll',()=>{if(stage.clientWidth!==layoutWidth||stage.clientHeight!==layoutHeight)return;if(mode==='flow')resizePos=position();else rememberFitCenter();},{passive:true});
   let skipAuto=false;try{skipAuto=sessionStorage.getItem('quiet-manga:exit')===key;sessionStorage.removeItem('quiet-manga:exit');}catch{}
   if(prefs.auto&&!skipAuto){let attempts=0;const timer=setInterval(()=>{if($('#mangaFile')?.naturalWidth){clearInterval(timer);q('#launch').click();}else if(++attempts>=60)clearInterval(timer);},250);}

@@ -15,7 +15,7 @@ function bindReadingTouch(stage, io) {
   stage.addEventListener('touchstart',e=>{
     if(!io.enabled())return;
     const ts=[...e.touches];if(ts.length===1){blocked=false;tap=null;
-      if(!interactive(e.target))tap={id:ts[0].identifier,...point(ts[0]),t:performance.now(),scroll:stage.scrollTop,dismissed:io.dismissed()};
+      if(!interactive(e.target))tap={id:ts[0].identifier,...point(ts[0]),t:performance.now(),scroll:stage.scrollTop,dismissed:io.dismissed(),canSwipe:io.canSwipe()};
       return;
     }
     tap=lastTap=null;
@@ -32,12 +32,25 @@ function bindReadingTouch(stage, io) {
       pinch.value=Math.min(pinch.max,Math.max(pinch.min,pinch.value*p.d/pinch.last));pinch.last=p.d;
       pending=p;if(!frame)frame=requestAnimationFrame(flush);return;
     }
-    if(tap&&(e.touches.length!==1||distance(tap,point(e.touches[0]))>9))tap=null;
+    if (!tap) return;
+    if (e.touches.length !== 1) {tap=null;return;}
+    const {x,y}=point(e.touches[0]), dx=Math.abs(x-tap.x), dy=Math.abs(y-tap.y);
+    if (Math.hypot(dx,dy)<=9) return;
+    if (!tap.canSwipe || tap.dismissed || dx<=1.6*dy) {tap=null;return;}
+    tap.dragged=true;
+    if(e.cancelable)e.preventDefault();
   },{passive:false});
   stage.addEventListener('touchend',e=>{
     lastEnd=performance.now();
     if(pinch||blocked){if(e.cancelable)e.preventDefault();finish(true);blocked=e.touches.length>0;tap=lastTap=null;return;}
     const t=[...e.changedTouches].find(x=>x.identifier===tap?.id),candidate=tap;tap=null;
+    if (t && !e.touches.length && candidate.dragged && io.canSwipe()) {
+      const dx=t.clientX-candidate.x,dy=t.clientY-candidate.y;
+      if(e.cancelable)e.preventDefault();
+      lastTap=null;
+      if(Math.abs(dx)>=48 && Math.abs(dx)>1.6*Math.abs(dy))io.swipe(dx);
+      return;
+    }
     if(!t||e.touches.length||!candidate||distance(candidate,point(t))>9||lastEnd-candidate.t>350||Math.abs(stage.scrollTop-candidate.scroll)>3){lastTap=null;return;}
     if(e.cancelable)e.preventDefault();if(candidate.dismissed){lastTap=null;return;}
     const p=point(t),double=lastTap&&lastEnd-lastTap.t<300&&distance(lastTap,p)<24;
